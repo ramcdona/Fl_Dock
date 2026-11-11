@@ -1,0 +1,664 @@
+//
+// Dock widget for the Fl_Dock extension to the Fast Light Tool Kit (FLTK).
+//
+// Copyright 2026 by Rob McDonald and others.
+//
+// This library is free software. Distribution and use rights are outlined in
+// the file "COPYING" which should have been included with this file. If this
+// file is missing or damaged, see the license at:
+//
+//     https://www.fltk.org/COPYING.php
+//
+
+#include <FL/Fl_Dock.H>
+#include <FL/Fl_Dock_Panel.H>
+#include <FL/Fl_Dock_Split.H>
+#include <FL/Fl_Dock_Tabs.H>
+#include <FL/Fl_Window.H>
+#include <FL/Fl.H>
+#include <FL/fl_draw.H>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/** The type() of the hidden group holding a dock's closed panels. */
+#define FL_DOCK_STORE 0xD4
+
+// Widgets made while the dock rearranges itself must not land in whatever
+// group the application has open.
+class Fl_Dock_Current {
+  Fl_Group *saved_;
+public:
+  Fl_Dock_Current() { saved_ = Fl_Group::current(); Fl_Group::current(0); }
+  ~Fl_Dock_Current() { Fl_Group::current(saved_); }
+};
+
+// The child of split s that is or holds w, or 0.
+static Fl_Widget *child_holding(Fl_Group *s, Fl_Widget *w) {
+  for (Fl_Widget *c = w; c; c = c->parent()) {
+    if (c->parent() == s) return c;
+  }
+  return 0;
+}
+
+// The widget a home names: a docked panel, the center, or 0 for the whole dock.
+static Fl_Widget *home_target(Fl_Dock *d, const char *ref) {
+  if (!ref) return 0;
+  if (!ref[0]) return d->center();
+  Fl_Dock_Panel *r = d->find(ref);
+  if (r && r->docked() && r->dock() == d) return r;
+  return 0;
+}
+
+// For a panel that was at an end of its split: the first or last node of
+// the split that target is in, along where, so the panel goes back past
+// whatever has docked beside target since.  A target in a split the other
+// way, or in none, is the part the panel's own split was made of.
+static Fl_Widget *edge_node(Fl_Widget *target, int where) {
+  int horizontal = (where == FL_DOCK_LEFT || where == FL_DOCK_RIGHT);
+  if (!target || !Fl_Dock::is_split(target->parent())) return target;
+  Fl_Dock_Split *s = (Fl_Dock_Split *)target->parent();
+  if (s->horizontal() != horizontal) return target;
+  if (where == FL_DOCK_LEFT || where == FL_DOCK_TOP) return s->child(0);
+  return s->child(s->children() - 1);
+}
+
+// The smallest node of d's tree holding both a and b, or a.
+static Fl_Widget *common_node(Fl_Dock *d, Fl_Widget *a, Fl_Widget *b) {
+  if (!b) return a;
+  for (Fl_Widget *x = a; x && x != d; x = x->parent()) {
+    for (Fl_Widget *y = b; y && y != d; y = y->parent()) {
+      if (x == y) return x;
+    }
+  }
+  return a;
+}
+
+// The name of the panel nearest one end of node: "" for the center.
+static const char *end_name(Fl_Widget *node, int last) {
+  while (Fl_Dock::is_split(node)) {
+    Fl_Group *g = (Fl_Group *)node;
+    node = g->child(0);
+    if (last) node = g->child(g->children() - 1);
+  }
+  if (Fl_Dock::is_tabs(node)) return ((Fl_Dock_Tabs *)node)->panel(0)->name();
+  return "";
+}
+
+/**
+  Creates an empty dock.  Unlike other groups it does not become the current
+  group: panels are given to it with add_panel(), not by creating them inside it.
+*/
+Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
+  : Fl_Group(X, Y, W, H, L) {
+  type(FL_DOCK);
+  box(FL_FLAT_BOX);
+  root_ = 0;
+  center_ = 0;
+  owner_ = 0;
+  callback_panel_ = 0;
+  keep_sizes_ = 1;
+  store_ = new Fl_Group(X, Y, W, H);
+  store_->type(FL_DOCK_STORE);
+  store_->end();
+  // Closed panels keep their own size as the dock is resized.
+  store_->resizable(0);
+  store_->hide();
+  end();
+}
+
+/** Returns 1 if w is an Fl_Dock_Split. */
+int Fl_Dock::is_split(const Fl_Widget *w) {
+  return w && w->type() == FL_DOCK_SPLIT && w->as_group() != 0;
+}
+
+/** Returns 1 if w is an Fl_Dock_Tabs. */
+int Fl_Dock::is_tabs(const Fl_Widget *w) {
+  return w && w->type() == FL_DOCK_TABS && w->as_group() != 0;
+}
+
+/** Returns 1 if w is an Fl_Dock_Panel. */
+int Fl_Dock::is_panel(const Fl_Widget *w) {
+  return w && w->type() == FL_DOCK_PANEL && w->as_group() != 0;
+}
+
+/**
+  Returns the version of the Fl_Dock library the application is linked with,
+  FL_DOCK_API_VERSION as it was when the library was built.  Compare it with
+  FL_DOCK_API_VERSION to check that the headers match the library, as
+  Fl::api_version() does for FLTK.
+*/
+int Fl_Dock::api_version() { return FL_DOCK_API_VERSION; }
+
+/** Resizes the dock and lays out what it holds in the new area; see keep_sizes(). */
+void Fl_Dock::resize(int X, int Y, int W, int H) {
+  Fl_Widget::resize(X, Y, W, H);
+  store_->resize(X, Y, W, H);
+  fit_root(1);
+}
+
+/** Draws the dock, or only its box and label while it holds nothing. */
+void Fl_Dock::draw() {
+  if (!root_) {
+    draw_box();
+    draw_label();
+    return;
+  }
+  Fl_Group::draw();
+}
+
+/** Gets the area the dock's tree takes: the whole dock. */
+void Fl_Dock::area(int &X, int &Y, int &W, int &H) const {
+  X = x();
+  Y = y();
+  W = w();
+  H = h();
+}
+
+// Fits the tree to the dock's area.  With keep set the area itself changed,
+// and the splits holding the center keep their other children's sizes.
+void Fl_Dock::fit_root(int keep) {
+  if (!root_) return;
+  int X, Y, W, H;
+  area(X, Y, W, H);
+  if (keep && keep_sizes() && center_ && center_->parent()) Fl_Dock_Split::keep_center_ = center_;
+  root_->resize(X, Y, W, H);
+  Fl_Dock_Split::keep_center_ = 0;
+}
+
+// Makes a node visible.  Before its window is shown it is only marked so:
+// show() on a subwindow, such as an Fl_Gl_Window center, whose window is not
+// shown yet leaves it unable to draw on macOS; the window maps it when shown.
+static void show_node(Fl_Widget *node) {
+  Fl_Window *win = node->window();
+  if (win && win->shown()) node->show();
+  else node->set_visible();
+}
+
+// Shows the panel each tab group under node shows.  Panels are shown only
+// inside a window, where any subwindows they hold can be mapped.
+static void reveal(Fl_Widget *node) {
+  if (Fl_Dock::is_tabs(node)) {
+    Fl_Dock_Tabs *t = (Fl_Dock_Tabs *)node;
+    if (t->value()) t->value(t->value());
+  } else if (Fl_Dock::is_split(node)) {
+    Fl_Group *g = (Fl_Group *)node;
+    for (int i = 0; i < g->children(); i++) reveal(g->child(i));
+  }
+}
+
+void Fl_Dock::set_root(Fl_Widget *node) {
+  if (root_ && root_->parent() == this) remove(root_);
+  root_ = node;
+  if (node) {
+    add(node);
+    show_node(node);
+    fit_root();
+    reveal(node);
+  }
+  redraw();
+}
+
+/**
+  Sets the center: a widget, such as a 3D view, that is a leaf of its own and
+  is never closed or floated.  Set it before adding panels; the dock takes it
+  as a child and deletes it with itself.  It is set once.
+*/
+void Fl_Dock::center(Fl_Widget *w) {
+  if (w == center_) return;
+  if (!w || center_) return;
+  center_ = w;
+  if (!root_) set_root(w);
+  else put(w, FL_DOCK_RIGHT, 0, 0.75);
+}
+
+// The depth of the tree at node: 1 for a leaf.
+static int tree_depth(Fl_Widget *node) {
+  if (!Fl_Dock::is_split(node)) return 1;
+  Fl_Group *g = (Fl_Group *)node;
+  int d = 0;
+  for (int i = 0; i < g->children(); i++) {
+    int c = tree_depth(g->child(i));
+    if (c > d) d = c;
+  }
+  return d + 1;
+}
+
+// 1 if p may join this dock: it has a name, and no other panel of the dock
+// has that name, so every layout the dock writes can be read back.
+int Fl_Dock::can_take(const Fl_Dock_Panel *p) const {
+  if (!p || !p->name() || !p->name()[0]) return 0;
+  Fl_Dock_Panel *q = owner()->find(p->name());
+  return !q || q == p;
+}
+
+// The node a reference widget names: the root for 0, the center, or the tab
+// group of a panel docked here.
+Fl_Widget *Fl_Dock::node_of(Fl_Widget *ref) const {
+  if (!ref) return root_;
+  if (ref == center_) return center_;
+  if (is_panel(ref) && is_tabs(ref->parent()) && ((Fl_Dock_Panel *)ref)->dock() == this) return ref->parent();
+  return 0;
+}
+
+// Puts node beside target, or beside the whole dock if target is 0, taking
+// that fraction of the target's space; or, with share set, taking that share
+// of the whole split it joins from all its children in proportion, which
+// undoes take() exactly.  The tree is normalized afterwards.
+void Fl_Dock::put(Fl_Widget *node, Fl_Dock_Where where, Fl_Widget *target, double fraction, int share) {
+  Fl_Dock_Current keep;
+  if (!(fraction > 0 && fraction < 1)) fraction = 0.25;
+  if (!root_) {
+    set_root(node);
+    return;
+  }
+  if (!target) target = root_;
+  int horizontal = (where == FL_DOCK_LEFT || where == FL_DOCK_RIGHT);
+  int before = (where == FL_DOCK_LEFT || where == FL_DOCK_TOP);
+  // Along an edge of the whole dock, in a split of that direction already: the node goes at its
+  // end, taking its share from the side holding the center, so the others keep their sizes
+  if (target == root_ && is_split(root_) && ((Fl_Dock_Split *)root_)->horizontal() == horizontal) {
+    Fl_Dock_Split *s = (Fl_Dock_Split *)root_;
+    int at = s->children();
+    if (before) at = 0;
+    s->insert_node(node, at, fraction, child_holding(s, center_));
+    s->layout();
+    show_node(node);
+    normalize();
+    fit_root();
+    reveal(node);
+    redraw();
+    return;
+  }
+  Fl_Group *p = target->parent();
+  if (is_split(p) && ((Fl_Dock_Split *)p)->horizontal() == horizontal) {
+    Fl_Dock_Split *s = (Fl_Dock_Split *)p;
+    int i = s->find(target);
+    double wt = s->weight(i);
+    int at = i + 1;
+    if (before) at = i;
+    if (share) {
+      // Taken from the side holding the center, which took it when the node left.
+      s->insert_node(node, at, fraction, child_holding(s, center_));
+      s->layout();
+      show_node(node);
+      normalize();
+      fit_root();
+      reveal(node);
+      redraw();
+      return;
+    }
+    // The new node takes its share from the target alone.
+    s->insert_node(node, at, 0.5);
+    int ti = s->find(target);
+    int ni = s->find(node);
+    double others = 0;
+    for (int k = 0; k < s->children(); k++) {
+      if (k != ti && k != ni) others += s->weight(k);
+    }
+    // Restore the others' shares, scaled back up, then split wt between the two.
+    double scale = 1;
+    if (others > 0) scale = (1 - wt) / others;
+    for (int k = 0; k < s->children(); k++) {
+      if (k != ti && k != ni) s->weight(k, s->weight(k) * scale);
+    }
+    s->weight(ni, wt * fraction);
+    s->weight(ti, wt * (1 - fraction));
+    s->layout();
+  } else {
+    Fl_Dock_Split *s = new Fl_Dock_Split(target->x(), target->y(), target->w(), target->h(), horizontal);
+    if (is_split(p)) ((Fl_Dock_Split *)p)->replace_node(target, s);
+    else set_root(s);
+    if (before) {
+      s->insert_node(node, 0, 0.5);
+      s->insert_node(target, 1, 0.5);
+      s->weight(0, fraction);
+      s->weight(1, 1 - fraction);
+    } else {
+      s->insert_node(target, 0, 0.5);
+      s->insert_node(node, 1, 0.5);
+      s->weight(0, 1 - fraction);
+      s->weight(1, fraction);
+    }
+  }
+  show_node(node);
+  normalize();
+  fit_root();
+  reveal(node);
+  redraw();
+}
+
+// Removes panel p from its tab group, and the group if that leaves it empty.
+// It is hidden first, while it is still in a window.
+void Fl_Dock::take(Fl_Dock_Panel *p) {
+  p->hide();
+  Fl_Group *t = p->parent();
+  if (is_tabs(t)) {
+    ((Fl_Dock_Tabs *)t)->remove_panel(p);
+  } else if (t) {
+    t->remove(p);
+  }
+  normalize();
+  fit_root();
+  redraw();
+}
+
+// Puts the subtree at node in normal form and returns what should take its
+// place: itself, one of its descendants, or 0 if nothing is left.  The space
+// of a node that goes is given to the side holding the center when there is
+// one, as the center is what takes up the space panels leave.
+Fl_Widget *Fl_Dock::normal_form(Fl_Widget *node, Fl_Widget *center) {
+  if (Fl_Dock::is_tabs(node)) {
+    if (((Fl_Group *)node)->children() == 0) return 0;
+    return node;
+  }
+  if (!Fl_Dock::is_split(node)) return node;
+  Fl_Dock_Split *s = (Fl_Dock_Split *)node;
+  for (int i = s->children() - 1; i >= 0; i--) {
+    Fl_Widget *c = s->child(i);
+    Fl_Widget *r = normal_form(c, center);
+    if (!r) {
+      s->remove_node(c, child_holding(s, center));
+      Fl::delete_widget(c);
+    } else if (r != c) {
+      s->replace_node(c, r);
+      Fl::delete_widget(c);
+    }
+  }
+  // A split in a split of the same direction gives its children to the parent.
+  for (int i = 0; i < s->children(); i++) {
+    Fl_Widget *c = s->child(i);
+    if (Fl_Dock::is_split(c) && ((Fl_Dock_Split *)c)->horizontal() == s->horizontal()) {
+      int n = ((Fl_Group *)c)->children();
+      s->absorb((Fl_Dock_Split *)c);
+      Fl::delete_widget(c);
+      i += n - 1;
+    }
+  }
+  if (s->children() == 0) return 0;
+  if (s->children() == 1) return s->child(0);
+  return s;
+}
+
+void Fl_Dock::normalize() {
+  if (!root_) return;
+  Fl_Widget *old = root_;
+  Fl_Widget *r = normal_form(old, center_);
+  if (r == old) return;
+  if (r) {
+    set_root(r);
+  } else {
+    remove(old);
+    root_ = 0;
+  }
+  if (old != center_ && !is_panel(old)) Fl::delete_widget(old);
+}
+
+// Tells the application that the user changed the dock: the changed flag
+// is set, and the callback called if when() asks for it.  A change made
+// step by step, as a bar is dragged, calls it each step with
+// FL_WHEN_CHANGED and at the end with FL_WHEN_RELEASE; any other calls it
+// once with either.
+void Fl_Dock::notify(Fl_Dock_Panel *p, Fl_Callback_Reason reason, int step) {
+  Fl_Dock *o = owner();
+  o->callback_panel_ = p;
+  o->set_changed();
+  int w = o->when();
+  int call = (w & (FL_WHEN_CHANGED | FL_WHEN_RELEASE)) != 0;
+  if (step == 1) call = (w & FL_WHEN_CHANGED) != 0;
+  else if (step == 2) call = (w & FL_WHEN_RELEASE) != 0;
+  if (call) o->do_callback(reason);
+}
+
+/**
+  Docks a panel: beside the widget ref on the given side, taking that share of
+  ref's space, or the panel's own width or height if fraction is 0, or as a
+  tab of ref's tab group for FL_DOCK_TAB.  ref is a panel
+  docked here, the center, or 0 for the whole dock.  A panel already in the
+  dock is moved; one in another dock is taken out
+  of that dock first.  A panel alone in its tab group cannot go beside or
+  into its own group.
+  \return 1 if the panel was docked; 0 if ref is not in this dock or is the
+    panel's own group, if the panel has no name or another panel of the dock
+    has its name, or if the tree is as deep as a layout may be
+*/
+int Fl_Dock::add_panel(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *ref, double fraction) {
+  if (!can_take(p)) return 0;
+  p->fix_name();
+  Fl_Widget *target = node_of(ref);
+  if (ref && !target) return 0;
+  // Taking p out would delete the group it is to go beside.
+  if (target && target == p->parent() && ((Fl_Dock_Tabs *)target)->panels() == 1) return 0;
+  return dock_at(p, where, target, fraction, 0);
+}
+
+// Docks p beside or into the node target; see put() for fraction and share.
+int Fl_Dock::dock_at(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *target, double fraction, int share) {
+  Fl_Dock_Current keep;
+  // A new group can make the tree one deeper.
+  if (where != FL_DOCK_TAB && root_ && tree_depth(root_) >= MAX_DEPTH) return 0;
+  // No fraction: the panel's own size, which is what it had when last docked.
+  if (!share && !(fraction > 0) && where != FL_DOCK_TAB && root_) {
+    Fl_Widget *t = target;
+    if (!t) t = root_;
+    double size = Fl_Dock_Tabs::outer_h(p->h());
+    double avail = t->h();
+    if (where == FL_DOCK_LEFT || where == FL_DOCK_RIGHT) {
+      size = Fl_Dock_Tabs::outer_w(p->w());
+      avail = t->w();
+    }
+    fraction = 0.25;
+    if (avail > 0) fraction = size / avail;
+    if (fraction < 0.05) fraction = 0.05;
+    if (fraction > 0.9) fraction = 0.9;
+  }
+  if (where == FL_DOCK_TAB && !is_tabs(target)) {
+    if (target) where = FL_DOCK_RIGHT;
+    else where = FL_DOCK_LEFT;
+  }
+  Fl_Dock *from = p->dock();
+  if (from) from->take(p);
+  else p->hide();
+  if (where == FL_DOCK_TAB) {
+    ((Fl_Dock_Tabs *)target)->insert_panel(p, -1);
+    fit_root();
+    redraw();
+    return 1;
+  }
+  Fl_Dock_Tabs *t = new Fl_Dock_Tabs(x(), y(), w(), h());
+  t->insert_panel(p, 0);
+  put(t, where, target, fraction, share);
+  return 1;
+}
+
+// Docks p at a place noted by remember_home() or a layout: beside or as a tab
+// of the panel named ref, beside the center if ref is "", or beside the whole
+// dock if ref is 0, with share its share of the split it rejoins.
+int Fl_Dock::restore(Fl_Dock_Panel *p, const char *ref, int where, double share) {
+  Fl_Widget *target = 0;
+  if (ref && !ref[0]) {
+    target = center_;
+  } else if (ref) {
+    Fl_Dock_Panel *r = find(ref);
+    if (r && r->docked() && r->dock() == this) target = r->parent();
+  }
+  if (where == FL_DOCK_TAB && !target) where = FL_DOCK_LEFT;
+  return dock_at(p, (Fl_Dock_Where)where, target, share, 1);
+}
+
+// Docks p at its home, beside the other neighbour if the first is not docked.
+int Fl_Dock::restore_home(Fl_Dock_Panel *p) {
+  const char *ref = p->home_ref();
+  int where = p->home_where();
+  int edge = p->home_edge();
+  if (ref && !home_target(this, ref) && p->home_ref2() && home_target(this, p->home_ref2())) {
+    ref = p->home_ref2();
+    where = p->home_where2();
+    edge = 0;
+  }
+  Fl_Widget *t = home_target(this, ref);
+  if (edge && t && where != FL_DOCK_TAB) {
+    if (is_panel(t)) t = t->parent();
+    Fl_Widget *far = home_target(this, p->home_span());
+    if (far && is_panel(far)) far = far->parent();
+    t = common_node(this, t, far);
+    return dock_at(p, (Fl_Dock_Where)where, edge_node(t, where), p->home_fraction(), 1);
+  }
+  return restore(p, ref, where, p->home_fraction());
+}
+
+// Notes where a docked panel is, so show_panel() or dock_panel() can put it back.
+void Fl_Dock::remember_home(Fl_Dock_Panel *p) {
+  Fl_Group *t = p->parent();
+  if (!is_tabs(t)) return;
+  Fl_Dock_Tabs *tabs = (Fl_Dock_Tabs *)t;
+  if (tabs->panels() > 1) {
+    Fl_Dock_Panel *other = tabs->panel(0);
+    if (other == p) other = tabs->panel(1);
+    p->home(other->name(), FL_DOCK_TAB, 0.25);
+    return;
+  }
+  Fl_Group *s = tabs->parent();
+  if (!is_split(s)) {
+    p->home(0, FL_DOCK_LEFT, 0.25);
+    return;
+  }
+  Fl_Dock_Split *sp = (Fl_Dock_Split *)s;
+  int i = sp->find(tabs);
+  int horizontal = sp->horizontal();
+  int before = FL_DOCK_TOP;     // the panel goes before its next neighbour
+  int after = FL_DOCK_BOTTOM;   // and after its previous one
+  if (horizontal) {
+    before = FL_DOCK_LEFT;
+    after = FL_DOCK_RIGHT;
+  }
+  // Each neighbour is named by its panel nearest this one, or "" for the
+  // center; its share of the split is taken back when it returns.
+  const char *next = 0;
+  const char *prev = 0;
+  if (i + 1 < sp->children()) next = end_name(sp->child(i + 1), 0);
+  if (i > 0) prev = end_name(sp->child(i - 1), 1);
+  if (next) {
+    p->home(next, before, sp->weight(i));
+    if (prev) p->home2(prev, after);
+    else p->home_edge(1, end_name(sp->child(i + 1), 1));
+  } else {
+    p->home(prev, after, sp->weight(i));
+    p->home_edge(1, end_name(sp->child(i - 1), 0));
+  }
+}
+
+
+/**
+  Closes a panel: it is hidden and kept, with where it was, so show_panel() can put
+  it back.  The panel's can_close() is not asked; the dock's callback is not
+  called.
+  \return 1 if the panel was docked here
+*/
+int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
+  if (!p) return 0;
+  Fl_Dock *d = p->dock();
+  if (!d || d->owner() != owner() || !p->docked()) return 0;
+  if (d == owner()) owner()->remember_home(p);
+  d->take(p);
+  owner()->store_->add(p);
+  return 1;
+}
+
+/**
+  Shows a panel: a closed one goes back where it was, and a docked one has its
+  tab selected.
+  \return 1 if the panel belongs to this dock
+*/
+int Fl_Dock::show_panel(Fl_Dock_Panel *p) {
+  if (!p) return 0;
+  Fl_Dock *d = p->dock();
+  if (!d || d->owner() != owner()) return 0;
+  if (p->docked()) {
+    ((Fl_Dock_Tabs *)p->parent())->value(p);
+    return 1;
+  }
+  Fl_Dock *o = owner();
+  o->restore_home(p);
+  return 1;
+}
+
+// Counts the panels under node, in order, putting the first max in out if it is given.
+static int walk_panels(Fl_Widget *node, Fl_Dock_Panel **out, int n, int max) {
+  if (!node) return n;
+  if (Fl_Dock::is_panel(node)) {
+    if (out && n < max) out[n] = (Fl_Dock_Panel *)node;
+    return n + 1;
+  }
+  if (Fl_Dock::is_tabs(node) || Fl_Dock::is_split(node) || node->type() == FL_DOCK_STORE) {
+    Fl_Group *g = (Fl_Group *)node;
+    for (int i = 0; i < g->children(); i++) n = walk_panels(g->child(i), out, n, max);
+  }
+  return n;
+}
+
+// The panels of this dock only: docked, then closed.  A
+// floating window's dock has no closed panels; its owner keeps them.
+static int own_panels(const Fl_Dock *d, Fl_Group *store, Fl_Dock_Panel **out, int max) {
+  int n = walk_panels(d->root(), out, 0, max);
+  if (d->owner() == d) n = walk_panels(store, out, n, max);
+  return n;
+}
+
+/**
+  Returns the number of panels: docked in this dock, and
+  closed.  A floating window's dock counts only its own.
+*/
+int Fl_Dock::panels() const {
+  int n = own_panels(this, store_, 0, 0);
+  return n;
+}
+
+// Every panel of panels(), in order, in one walk; the caller frees the list.
+Fl_Dock_Panel **Fl_Dock::all_panels(int &n) const {
+  n = panels();
+  Fl_Dock_Panel **all = (Fl_Dock_Panel **)malloc(sizeof(Fl_Dock_Panel *) * (n + 1));
+  own_panels(this, store_, all, n);
+  return all;
+}
+
+/**
+  Returns panel i of panels(), or 0.  Each call walks the dock, so to visit
+  every panel, find() or a walk of the tree may be quicker.
+*/
+Fl_Dock_Panel *Fl_Dock::panel(int i) const {
+  int n;
+  Fl_Dock_Panel **all = all_panels(n);
+  Fl_Dock_Panel *p = 0;
+  if (i >= 0 && i < n) p = all[i];
+  free(all);
+  return p;
+}
+
+// The panel named name under node, or 0.
+static Fl_Dock_Panel *find_under(Fl_Widget *node, const char *name) {
+  if (!node) return 0;
+  if (Fl_Dock::is_panel(node)) {
+    Fl_Dock_Panel *p = (Fl_Dock_Panel *)node;
+    if (p->name() && !strcmp(p->name(), name)) return p;
+    return 0;
+  }
+  if (Fl_Dock::is_tabs(node) || Fl_Dock::is_split(node) || node->type() == FL_DOCK_STORE) {
+    Fl_Group *g = (Fl_Group *)node;
+    for (int i = 0; i < g->children(); i++) {
+      Fl_Dock_Panel *p = find_under(g->child(i), name);
+      if (p) return p;
+    }
+  }
+  return 0;
+}
+
+/** Returns the panel with this name, docked or closed, or 0. */
+Fl_Dock_Panel *Fl_Dock::find(const char *name) const {
+  if (!name) return 0;
+  const Fl_Dock *o = this;
+  if (owner_) o = owner_;
+  Fl_Dock_Panel *p = find_under(o->root_, name);
+  if (!p) p = find_under(o->store_, name);
+  return p;
+}

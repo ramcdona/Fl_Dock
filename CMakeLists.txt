@@ -20,6 +20,8 @@ foreach(part MAJOR MINOR PATCH)
 endforeach()
 project(Fl_Dock VERSION ${fl_dock_MAJOR}.${fl_dock_MINOR}.${fl_dock_PATCH} LANGUAGES C CXX)
 
+option(FL_DOCK_BUILD_TEST "Build the test programs" ON)
+
 # FLTK's package accepts only its own minor version, so check the lowest one here.
 find_package(FLTK CONFIG REQUIRED)
 if(FLTK_VERSION VERSION_LESS 1.4)
@@ -38,13 +40,20 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 set(FL_DOCK_HEADERS
+  FL/Fl_Dock.H
   FL/Fl_Dock_Export.H
+  FL/Fl_Dock_Panel.H
   FL/Fl_Dock_Split.H
+  FL/Fl_Dock_Tabs.H
 )
 
 # Static unless BUILD_SHARED_LIBS is set.
 add_library(fltk_dock
+  src/Fl_Dock.cxx
+  src/Fl_Dock_Layout.cxx
+  src/Fl_Dock_Panel.cxx
   src/Fl_Dock_Split.cxx
+  src/Fl_Dock_Tabs.cxx
   ${FL_DOCK_HEADERS}
 )
 add_library(fltk::dock ALIAS fltk_dock)
@@ -88,3 +97,8 @@ install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/Fl_DockConfigVersion.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Fl_Dock
 )
+
+if(FL_DOCK_BUILD_TEST)
+  enable_testing()
+  add_subdirectory(test)
+endif()

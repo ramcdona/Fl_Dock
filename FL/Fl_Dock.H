@@ -1,0 +1,160 @@
+//
+// Dock header file for the Fl_Dock extension to the Fast Light Tool Kit (FLTK).
+//
+// Copyright 2026 by Rob McDonald and others.
+//
+// This library is free software. Distribution and use rights are outlined in
+// the file "COPYING" which should have been included with this file. If this
+// file is missing or damaged, see the license at:
+//
+//     https://www.fltk.org/COPYING.php
+//
+
+#ifndef Fl_Dock_H
+#define Fl_Dock_H
+
+#include <FL/Fl_Dock_Export.H>
+#include <FL/Fl_Group.H>
+
+class Fl_Dock_Panel;
+class Fl_Dock_Tabs;
+class Fl_Dock_Split;
+
+/** The version of Fl_Dock: 10000 * major + 100 * minor + patch. */
+#define FL_DOCK_VERSION 100
+
+/** The type() of an Fl_Dock. */
+#define FL_DOCK 0xD3
+
+/**
+  Where a panel goes relative to another, for Fl_Dock::add_panel().
+*/
+enum Fl_Dock_Where {
+  FL_DOCK_LEFT = 0,     ///< beside it, on the left
+  FL_DOCK_RIGHT,        ///< beside it, on the right
+  FL_DOCK_TOP,          ///< above it
+  FL_DOCK_BOTTOM,       ///< below it
+  FL_DOCK_TAB           ///< as a tab of its tab group
+};
+
+/**
+  Arranges an application's panels, which the user can drag to dock them side
+  by side, stack them as tabs, float them in windows of their own and close
+  them, and saves and restores the arrangement.
+
+  An Fl_Dock is a group holding a tree: its inner nodes are Fl_Dock_Split
+  groups that lay their children side by side or one above another, and its
+  leaves are Fl_Dock_Tabs groups that stack Fl_Dock_Panel widgets as tabs.  A
+  dock may also have a center, one widget such as a 3D view, which is a leaf of
+  its own and is never closed or floated.  After every change the tree is put
+  in a normal form: no empty tab groups, no split with one child, and no split
+  inside a split of the same direction.
+
+  \code
+  Fl_Dock *dock = new Fl_Dock(0, 25, 800, 575);
+  dock->center(view);
+  dock->add_panel(files, FL_DOCK_LEFT, 0, 0.25);      // left of everything
+  dock->add_panel(props, FL_DOCK_BOTTOM, files, 0.5); // below files
+  dock->add_panel(notes, FL_DOCK_TAB, props);         // a tab beside props
+  \endcode
+
+  The dock's callback tells the application what the user did, as for other
+  FLTK widgets: changes made by calling the dock's functions do not call it.
+  Each change sets the dock's changed() flag, and calls the callback, with
+  Fl::callback_reason() set and callback_panel() returning the panel, if
+  when() has FL_WHEN_CHANGED or FL_WHEN_RELEASE, the default.  The reasons:
+
+  - FL_REASON_CLOSED: the user closed a panel, from its tab.
+  - FL_REASON_SELECTED: the user selected a panel's tab.
+  - FL_REASON_CHANGED: the user dragged a bar between two parts of the dock,
+    for which callback_panel() is 0.
+
+  Dragging a bar calls the callback as it moves
+  with FL_WHEN_CHANGED and when it is let go with FL_WHEN_RELEASE.  An
+  application that saves its layout when it changes can save on every call.
+*/
+class FL_DOCK_EXPORT Fl_Dock : public Fl_Group {
+public:
+  /**
+    The deepest tree a layout may hold, and so the deepest a dock builds:
+    add_panel() refuses a panel that would make the tree deeper.
+  */
+  enum { MAX_DEPTH = 1000 };
+
+private:
+  Fl_Widget *root_;             // the tree's root node, or 0
+  Fl_Widget *center_;           // the center widget, or 0
+  Fl_Group *store_;             // hidden: closed panels
+  Fl_Dock *owner_;              // the dock this one's window was floated from, or 0
+  Fl_Dock_Panel *callback_panel_;
+  int keep_sizes_;              // 1 if panels keep their sizes as the dock is resized
+
+  int can_take(const Fl_Dock_Panel *p) const;
+  Fl_Dock_Panel **all_panels(int &n) const;
+  Fl_Widget *node_of(Fl_Widget *ref) const;
+  void put(Fl_Widget *node, Fl_Dock_Where where, Fl_Widget *target, double fraction, int share = 0);
+  int dock_at(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *target, double fraction, int share);
+  int restore(Fl_Dock_Panel *p, const char *ref, int where, double share);
+  int restore_home(Fl_Dock_Panel *p);
+  void take(Fl_Dock_Panel *p);
+  void normalize();
+  static Fl_Widget *normal_form(Fl_Widget *node, Fl_Widget *center);
+  void set_root(Fl_Widget *node);
+  void fit_root(int keep = 0);
+  void remember_home(Fl_Dock_Panel *p);
+  void notify(Fl_Dock_Panel *p, Fl_Callback_Reason reason, int step = 0);
+
+  friend class Fl_Dock_Tabs;
+  friend class Fl_Dock_Split;
+
+public:
+  Fl_Dock(int X, int Y, int W, int H, const char *L = 0);
+
+  void resize(int X, int Y, int W, int H) FL_OVERRIDE;
+  void draw() FL_OVERRIDE;
+
+  /** Returns the root node of the tree, or 0 if the dock is empty. */
+  Fl_Widget *root() const { return root_; }
+
+  /** Returns the center widget, or 0. */
+  Fl_Widget *center() const { return center_; }
+  void center(Fl_Widget *w);
+
+  int add_panel(Fl_Dock_Panel *p, Fl_Dock_Where where = FL_DOCK_LEFT, Fl_Widget *ref = 0, double fraction = 0.25);
+  int close_panel(Fl_Dock_Panel *p);
+  int show_panel(Fl_Dock_Panel *p);
+
+  Fl_Dock_Panel *find(const char *name) const;
+  int panels() const;
+  Fl_Dock_Panel *panel(int i) const;
+
+  /** Returns the dock this one belongs to: itself, or the dock its floating window was floated from. */
+  Fl_Dock *owner() { if (owner_) return owner_; return this; }
+  /** Returns the dock this one belongs to. */
+  const Fl_Dock *owner() const { if (owner_) return owner_; return this; }
+
+  int write_layout(char *buf, int size) const;
+
+  void area(int &X, int &Y, int &W, int &H) const;
+
+  /**
+    Sets whether docked panels keep their sizes as the dock is resized, as
+    in most applications with docking: the part of the dock holding the
+    center grows and shrinks, and the panels beside it keep their widths and
+    heights until the center would get less than a third of the room.  When
+    off, every part keeps its share of the dock.  On by default.
+  */
+  void keep_sizes(int on) { owner()->keep_sizes_ = on; }
+  /** Returns 1 if docked panels keep their sizes as the dock is resized. */
+  int keep_sizes() const { return owner()->keep_sizes_; }
+
+  /** Returns the panel the last callback was about, or 0 if it was about none. */
+  Fl_Dock_Panel *callback_panel() const { return callback_panel_; }
+
+  static int is_split(const Fl_Widget *w);
+  static int is_tabs(const Fl_Widget *w);
+  static int is_panel(const Fl_Widget *w);
+  static int api_version();
+};
+
+#endif // !Fl_Dock_H

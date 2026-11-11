@@ -11,6 +11,7 @@
 //
 
 #include <FL/Fl_Dock_Split.H>
+#include <FL/Fl_Dock.H>
 #include <FL/Fl.H>
 #include <FL/Fl_Window.H>
 #include <FL/fl_draw.H>
@@ -125,6 +126,14 @@ void Fl_Dock_Split::insert_node(Fl_Widget *w, int index, double weight, Fl_Widge
   free(weights_);
   weights_ = nw;
   nweights_ = children();
+}
+
+// The dock the split is in, or 0.
+static Fl_Dock *dock_of(Fl_Widget *w) {
+  for (Fl_Widget *p = w->parent(); p; p = p->parent()) {
+    if (p->type() == FL_DOCK && p->as_group()) return (Fl_Dock *)p;
+  }
+  return 0;
 }
 
 /**
@@ -382,6 +391,10 @@ int Fl_Dock_Split::handle(int event) {
         }
         layout();
         redraw();
+        // The dock's callback, with no panel, as the bar moves and when it
+        // is let go, as when() asks.
+        Fl_Dock *d = dock_of(this);
+        if (d) d->notify(0, FL_REASON_CHANGED, 1);
         return 1;
       }
       break;
@@ -389,6 +402,8 @@ int Fl_Dock_Split::handle(int event) {
       if (dragging_ >= 0) {
         dragging_ = -1;
         if (bar_at(Fl::event_x(), Fl::event_y()) < 0) window()->cursor(FL_CURSOR_DEFAULT);
+        Fl_Dock *d = dock_of(this);
+        if (d) d->notify(0, FL_REASON_CHANGED, 2);
         return 1;
       }
       break;
