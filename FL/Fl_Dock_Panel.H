@@ -90,9 +90,11 @@ class FL_DOCK_EXPORT Fl_Dock_Panel : public Fl_Group {
   Fl_Image *dock_icon_;
   int dock_shortcut_;
   int slide_size_;      // the width or height it slides out at; 0 for its own
+  int place_group_;
 
   void fix_name();
   void stripe(int side, int group) { stripe_side_ = side; stripe_group_ = group; }
+  void copy_place(const Fl_Dock_Panel *from);
   // Where the panel goes back to: next to the panel named home_ref(), the
   // center if it is "", or the whole dock if 0, on side home_where(), with
   // home_fraction() of the space; home_relative() is 1 if that is a
@@ -150,6 +152,16 @@ public:
   int dock_shortcut() const { return dock_shortcut_; }
   /** Sets the key, as for Fl_Button::shortcut(), that shows and hides the panel as its stripe button does. */
   void dock_shortcut(int s) { dock_shortcut_ = s; }
+  /** Returns the panel's place group, or 0 for none.  \see place_group(int) */
+  int place_group() const { return place_group_; }
+  /**
+    Puts the panel in a place group: panels that take turns in one place,
+    such as editors for different kinds of item.  Showing one closes the one
+    of its group that is shown, and opens it where the last of its group
+    was: docked in the same place with the same share, or in an inset or
+    floating window at the same place and size.  0, the default, is none.
+  */
+  void place_group(int g) { place_group_ = g; }
   /** Returns the width or height the panel slides out at, or 0 for its own. */
   int slide_size() const { return slide_size_; }
   /** Sets the width or height the panel slides out at; the dock sets it as the user resizes it. */

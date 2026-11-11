@@ -43,6 +43,7 @@ Fl_Dock_Panel::Fl_Dock_Panel(int X, int Y, int W, int H, const char *L)
   dock_icon_ = 0;
   dock_shortcut_ = 0;
   slide_size_ = 0;
+  place_group_ = 0;
   for (int i = 0; i < 4; i++) {
     inset_rect_[i] = 0;
     float_rect_[i] = 0;
@@ -192,4 +193,22 @@ void Fl_Dock_Panel::home_edge(int e, const char *span) {
   free(home_span_);
   home_span_ = 0;
   if (e && span) home_span_ = fl_strdup(span);
+}
+
+/**
+  \internal Takes the place another panel had: how it was shown, where it was
+  docked and with what share, and the windows it was in.
+*/
+void Fl_Dock_Panel::copy_place(const Fl_Dock_Panel *from) {
+  if (!from || from == this) return;
+  home(from->home_ref(), from->home_where(), from->home_fraction(), from->home_relative());
+  home2(from->home_ref2(), from->home_where2());
+  home_edge(from->home_edge_, from->home_span_);
+  int m = from->mode();
+  if (m == FL_DOCK_MODE_SLIDING) m = FL_DOCK_MODE_DOCKED;
+  mode(m);
+  for (int i = 0; i < 4; i++) {
+    inset_rect_[i] = from->inset_rect_[i];
+    float_rect_[i] = from->float_rect_[i];
+  }
 }

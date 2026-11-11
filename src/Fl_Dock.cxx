@@ -113,6 +113,8 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   saved_kind_ = 0;
   panel_menu_ = 0;
   panel_menu_path_ = 0;
+  last_placed_ = 0;
+  nlast_placed_ = 0;
   keep_sizes_ = 1;
   reading_ = 0;
   has_center_ = 0;
@@ -162,6 +164,28 @@ Fl_Dock::~Fl_Dock() {
   clear_kept();
   free(saved_layout_);
   free(panel_menu_path_);
+  free(last_placed_);
+}
+
+// The last panel of a place group to close, or 0.
+Fl_Dock_Panel *Fl_Dock::last_placed(int group) const {
+  for (int i = 0; i < nlast_placed_; i++) {
+    if (last_placed_[i]->place_group() == group) return last_placed_[i];
+  }
+  return 0;
+}
+
+// Notes p as the last of its place group to close.
+void Fl_Dock::set_last_placed(Fl_Dock_Panel *p) {
+  if (!p->place_group()) return;
+  for (int i = 0; i < nlast_placed_; i++) {
+    if (last_placed_[i]->place_group() == p->place_group()) {
+      last_placed_[i] = p;
+      return;
+    }
+  }
+  last_placed_ = (Fl_Dock_Panel **)realloc(last_placed_, sizeof(Fl_Dock_Panel *) * (nlast_placed_ + 1));
+  last_placed_[nlast_placed_++] = p;
 }
 
 /** Returns 1 if w is an Fl_Dock_Split. */
@@ -827,6 +851,7 @@ int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
   if (d == owner()) owner()->remember_home(p);
   d->take(p);
   owner()->store_->add(p);
+  owner()->set_last_placed(p);
   return 1;
 }
 
@@ -865,12 +890,19 @@ void Fl_Dock::drop_hidden() {
   o->saved_kind_ = 0;
 }
 
+// Forgets every pointer to p the dock keeps outside its tree: drags, the
+// stripes, place groups, the last callback and the panel menu.
 void Fl_Dock::forget(Fl_Dock_Panel *p) {
   Fl_Dock_Drag::forget(p);
   for (int s = 0; s < 4; s++) {
     if (stripe_[s]) stripe_[s]->remove(p);
   }
   p->stripe(-1, 0);
+  int k = 0;
+  for (int i = 0; i < nlast_placed_; i++) {
+    if (last_placed_[i] != p) last_placed_[k++] = last_placed_[i];
+  }
+  nlast_placed_ = k;
   if (callback_panel_ == p) callback_panel_ = 0;
   remove_menu_item(p);
 }
@@ -893,6 +925,18 @@ int Fl_Dock::show_panel(Fl_Dock_Panel *p) {
     return 1;
   }
   Fl_Dock *o = owner();
+  // A panel of a place group takes the turn of the one shown, and its place.
+  if (p->place_group()) {
+    int n;
+    Fl_Dock_Panel **all = o->all_panels(n);
+    for (int i = 0; i < n; i++) {
+      Fl_Dock_Panel *q = all[i];
+      if (q != p && q->place_group() == p->place_group() && q->docked()) o->close_panel(q);
+    }
+    free(all);
+    Fl_Dock_Panel *last = o->last_placed(p->place_group());
+    if (last && last != p) p->copy_place(last);
+  }
   // A closed panel opens the way it was shown before.
   if (p->mode() == FL_DOCK_MODE_INSET && o->window()) {
     if (o->inset_panel(p)) return 1;

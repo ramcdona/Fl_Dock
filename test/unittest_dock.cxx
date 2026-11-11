@@ -524,6 +524,46 @@ TEST(Tree, SwappingEditorsInIndexOrder) {
   return true;
 }
 
+TEST(Tree, PlaceGroup) {
+  // Editors of a place group take turns in one place, wherever the last was.
+  setup(1);
+  Fl_Dock_Panel *browser = make_panel("browser");
+  dock->add_panel(browser, FL_DOCK_RIGHT, 0, 0.15);
+  Fl_Dock_Panel *ed[3];
+  const char *names[3] = { "e0", "e1", "e2" };
+  for (int i = 0; i < 3; i++) {
+    ed[i] = make_panel(names[i]);
+    ed[i]->size(140 + 30 * i, 100);
+    ed[i]->place_group(1);
+    dock->store_panel(ed[i], FL_DOCK_RIGHT, view, 0);
+  }
+  dock->show_panel(ed[0]);
+  int x0 = ed[0]->parent()->x();
+  int w0 = ed[0]->parent()->w();
+  // Showing another closes the first and opens in its place.
+  dock->show_panel(ed[1]);
+  EXPECT_TRUE(!ed[0]->docked());
+  EXPECT_EQ(ed[1]->parent()->x(), x0);
+  EXPECT_EQ(ed[1]->parent()->w(), w0);
+  // Floated inside, the next one opens floated inside at the same place.
+  dock->inset_panel(ed[1], 50, 60, 220, 180);
+  dock->show_panel(ed[2]);
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(!ed[1]->docked());
+  EXPECT_TRUE(((Fl_Dock_Window *)ed[2]->window())->inset());
+  EXPECT_EQ(ed[2]->window()->x() - dock->x(), 50);
+  EXPECT_EQ(ed[2]->window()->w(), 220);
+  // Docked again, the next one docks where it was.
+  dock->dock_panel(ed[2]);
+  Fl::do_widget_deletion();
+  dock->show_panel(ed[0]);
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(ed[0]->dock() == dock);
+  EXPECT_TRUE(ed[0]->x() > view->x() + view->w());
+  EXPECT_TRUE(ed[0]->x() < browser->x());
+  return true;
+}
+
 TEST(Tree, BorderAroundPanels) {
   arrange();
   Fl_Dock_Panel *a = dock->find("a");
@@ -1535,6 +1575,29 @@ TEST(Remove, DeleteDocked) {
   delete dock->find("c");
   EXPECT_TRUE(dock->find("b")->visible());
   EXPECT_TRUE(rereads());
+  return true;
+}
+
+TEST(Remove, DeleteClosedStripedPlaced) {
+  arrange_stripes();
+  Fl_Group::current(0);
+  Fl_Menu_Bar *bar = new Fl_Menu_Bar(0, 0, 100, 20);
+  dock->panel_menu(bar, "View/Panels");
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Panel *e = make_panel("e");
+  a->place_group(1);
+  e->place_group(1);
+  dock->store_panel(e, FL_DOCK_RIGHT, view, 0.3);
+  dock->close_panel(a);
+  delete a;
+  EXPECT_TRUE(bar->find_item("View/Panels/a") == 0);
+  EXPECT_EQ(dock->stripe(FL_DOCK_LEFT)->count(), 1);
+  dock->show_panel(e);
+  dock->toggle_panel(dock->find("b"));
+  EXPECT_TRUE(strstr(text(), " a") == 0);
+  EXPECT_TRUE(rereads());
+  dock->panel_menu(0, 0);
+  delete bar;
   return true;
 }
 

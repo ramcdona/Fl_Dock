@@ -153,6 +153,8 @@ private:
   int saved_kind_;              // 1 hide_all, 2 maximize_panel
   Fl_Menu_ *panel_menu_;
   char *panel_menu_path_;
+  Fl_Dock_Panel **last_placed_; // the last panel of each place group to close
+  int nlast_placed_;
   int keep_sizes_;              // 1 if panels keep their sizes as the dock is resized
   int reading_;                 // 1 while a layout is read
   int has_center_;              // 1 while a center is set; center_ is cleared if it is deleted
@@ -192,6 +194,8 @@ private:
   int kept_place(const char *name, const char **ref, int *where, double *fraction) const;
   void clear_kept();
   void place_stripes();
+  Fl_Dock_Panel *last_placed(int group) const;
+  void set_last_placed(Fl_Dock_Panel *p);
   void place_slide();
   void update_panel_menu();
   void remove_menu_item(Fl_Dock_Panel *p);
