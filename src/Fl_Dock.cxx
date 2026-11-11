@@ -99,6 +99,10 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   windows_ = 0;
   nwindows_ = 0;
   callback_panel_ = 0;
+  factory_ = 0;
+  factory_data_ = 0;
+  kept_ = 0;
+  nkept_ = 0;
   keep_sizes_ = 1;
   store_ = new Fl_Group(X, Y, W, H);
   store_->type(FL_DOCK_STORE);
@@ -117,6 +121,7 @@ Fl_Dock::~Fl_Dock() {
     delete w;
   }
   free(windows_);
+  clear_kept();
 }
 
 /** Returns 1 if w is an Fl_Dock_Split. */
@@ -644,6 +649,26 @@ int Fl_Dock::show_panel(Fl_Dock_Panel *p) {
   Fl_Dock *o = owner();
   o->restore_home(p);
   return 1;
+}
+
+/**
+  Docks a panel the dock does not have yet: where the last layout read put a
+  panel of that name, or else as add_panel() would with these arguments.  Use it
+  instead of add_panel() for panels created after a layout is restored, so they go
+  back where the user had them.
+  \return 1 if the panel was docked, 0 if not, as for add_panel()
+*/
+int Fl_Dock::place_panel(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *ref, double fraction) {
+  Fl_Dock *o = owner();
+  if (!o->can_take(p)) return 0;
+  p->fix_name();
+  const char *kref;
+  int kwhere;
+  double kfraction;
+  if (o->kept_place(p->name(), &kref, &kwhere, &kfraction)) {
+    if (!kref || home_target(o, kref)) return o->restore(p, kref, kwhere, kfraction);
+  }
+  return o->add_panel(p, where, ref, fraction);
 }
 
 /**

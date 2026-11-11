@@ -137,6 +137,33 @@ static const char *text() {
   return buf;
 }
 
+// True if the dock reads back the layout it writes, and writes it again the
+// same.
+static char *written() {
+  int n = dock->write_layout(0, 0);
+  char *buf = (char *)malloc(n + 1);
+  dock->write_layout(buf, n + 1);
+  return buf;
+}
+
+static bool rereads() {
+  char *before = written();
+  bool ok = true;
+  if (dock->read_layout(before) != 0) {
+    fprintf(stderr, "own layout not read:\n%s", before);
+    ok = false;
+  }
+  Fl::do_widget_deletion();
+  char *after = written();
+  if (ok && strcmp(after, before)) {
+    fprintf(stderr, "own layout read as\n%sfrom\n%s", after, before);
+    ok = false;
+  }
+  free(before);
+  free(after);
+  return ok;
+}
+
 // Sends a mouse event to w at X, Y with the left button.
 static int mouse(Fl_Widget *w, int event, int X, int Y) {
   Fl::e_x = X;
@@ -308,6 +335,44 @@ TEST(Tree, CloseShowKeepsSizes) {
   EXPECT_EQ(a->w(), aw);
   EXPECT_EQ(b->w(), bw);
   EXPECT_EQ(view->w(), vw);
+  return true;
+}
+
+// Resizes the window and its dock, as the user does.
+static void resize_dock(int W, int H) {
+  win->size(W, H);
+  dock->resize(0, 0, W, H);
+}
+
+TEST(Tree, PanelsKeepSizes) {
+  // The center takes what the window gains or loses; the panels keep their
+  // sizes until the center would have less than a third.
+  arrange();
+  dock->add_panel(make_panel("d"), FL_DOCK_BOTTOM, view, 0.3);
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Panel *d = dock->find("d");
+  int aw = a->w();
+  int dh = d->h();
+  resize_dock(1600, 1200);
+  EXPECT_EQ(a->w(), aw);
+  EXPECT_EQ(d->h(), dh);
+  EXPECT_TRUE(normal(dock->root()));
+  resize_dock(700, 500);
+  EXPECT_EQ(a->w(), aw);
+  EXPECT_EQ(d->h(), dh);
+  // Too small: the panels shrink in proportion, the center keeps a third.
+  resize_dock(300, 200);
+  EXPECT_TRUE(a->w() < aw);
+  EXPECT_NEAR(view->w(), (300 - Fl_Dock_Split::bar_size()) / 3.0, 2);
+  EXPECT_TRUE(normal(dock->root()));
+  EXPECT_TRUE(rereads());
+  // Without keep_sizes() every part keeps its share.
+  setup(1);
+  dock->keep_sizes(0);
+  dock->add_panel(make_panel("a"), FL_DOCK_LEFT, 0, 0.25);
+  resize_dock(1600, 1200);
+  EXPECT_NEAR(dock->find("a")->parent()->w(), 0.25 * (1600 - Fl_Dock_Split::bar_size()), 1);
+  resize_dock(800, 600);
   return true;
 }
 
@@ -569,6 +634,146 @@ TEST(Float, DockGoesFirst) {
 
 // ---- Layout ------------------------------------------------------------------
 
+TEST(Layout, RoundTrip) {
+  arrange();
+  dock->float_panel(dock->find("a"), 120, 80, 300, 400);
+  dock->close_panel(dock->find("b"));
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  EXPECT_STREQ(saved,
+    "fl_dock 1\n"
+    "dock\n"
+    " split h 0.25 0.75\n"
+    "  tabs 0 c\n"
+    "  center\n"
+    "window 120 80 300 400\n"
+    " tabs 0 a\n"
+    "closed b\n"
+    "size 800 600\n");
+  // Put everything somewhere else, then restore.
+  dock->dock_panel(dock->find("a"));
+  dock->show_panel(dock->find("b"));
+  dock->add_panel(dock->find("c"), FL_DOCK_BOTTOM, view, 0.3);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  Fl::do_widget_deletion();
+  EXPECT_STREQ(text(), saved);
+  EXPECT_EQ(dock->windows(), 1);
+  EXPECT_TRUE(normal(dock->root()));
+  return true;
+}
+
+TEST(Layout, InsetRoundTrip) {
+  arrange();
+  dock->inset_panel(dock->find("c"), 40, 30, 250, 200);
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  EXPECT_TRUE(strstr(saved, "inset 40 30 250 200\n tabs 0 c\n") != 0);
+  dock->dock_panel(dock->find("c"));
+  Fl::do_widget_deletion();
+  EXPECT_EQ(dock->windows(), 0);
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  Fl::do_widget_deletion();
+  EXPECT_STREQ(text(), saved);
+  EXPECT_TRUE(dock->window_at(0)->inset());
+  // An inset holding the center is refused.
+  EXPECT_EQ(dock->read_layout("fl_dock 1\ndock\n tabs 0 a\ninset 0 0 100 100\n center\n"), -1);
+  return true;
+}
+
+TEST(Layout, RestoreAtOtherSize) {
+  // A layout saved in a larger dock is restored with the panels at the
+  // sizes they had there, the center taking the difference.
+  arrange();
+  resize_dock(1600, 1200);
+  dock->add_panel(make_panel("d"), FL_DOCK_BOTTOM, view, 0.2);
+  int aw = dock->find("a")->w();
+  int dh = dock->find("d")->h();
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  EXPECT_TRUE(strstr(saved, "size 1600 1200\n") != 0);
+  resize_dock(800, 600);
+  dock->close_panel(dock->find("a"));
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  EXPECT_EQ(dock->find("a")->w(), aw);
+  EXPECT_EQ(dock->find("d")->h(), dh);
+  EXPECT_TRUE(normal(dock->root()));
+  // Without the size, or with keep_sizes() off, the shares are kept.
+  dock->keep_sizes(0);
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  int bar = Fl_Dock_Split::bar_size();
+  EXPECT_NEAR(dock->find("a")->parent()->w(), Fl_Dock_Tabs::outer_w(aw) * (800.0 - bar) / (1600 - bar), 2);
+  dock->keep_sizes(1);
+  return true;
+}
+
+static Fl_Dock_Panel *same_panel(Fl_Dock *d, const char *name, void *data) {
+  return (Fl_Dock_Panel *)data;
+}
+
+TEST(Layout, FactoryChecked) {
+  // A factory returning one panel for two names, or a panel of the dock,
+  // is not believed.
+  arrange();
+  Fl_Dock_Panel *zz = make_panel("zz");
+  dock->panel_factory(same_panel, zz);
+  EXPECT_EQ(dock->read_layout("fl_dock 1\ndock\n split h 0.5 0.5\n  tabs 0 x\n  tabs 0 y\n"), 0);
+  EXPECT_TRUE(zz->dock() == 0);
+  dock->panel_factory(same_panel, dock->find("a"));
+  EXPECT_EQ(dock->read_layout("fl_dock 1\ndock\n tabs 0 x\n"), 0);
+  dock->panel_factory(0);
+  EXPECT_TRUE(rereads());
+  delete zz;
+  return true;
+}
+
+TEST(Layout, DeepTrees) {
+  // Panels docked one inside the other as deep as add_panel() allows write
+  // a layout that reads back.
+  setup(1);
+  Fl_Dock_Panel *last = 0;
+  int refused = 0;
+  for (int i = 0; i < Fl_Dock::MAX_DEPTH + 10 && !refused; i++) {
+    char name[16];
+    snprintf(name, sizeof(name), "p%d", i);
+    Fl_Dock_Panel *p = make_panel(name);
+    Fl_Dock_Where where = FL_DOCK_RIGHT;
+    if (i % 2) where = FL_DOCK_BOTTOM;
+    if (!dock->add_panel(p, where, last, 0.5)) {
+      refused = 1;
+      delete p;
+    }
+    last = p;
+  }
+  EXPECT_TRUE(refused);
+  EXPECT_TRUE(rereads());
+  return true;
+}
+
+TEST(Layout, NameAndLabel) {
+  // A panel's name is its label unless set, and stays when the label
+  // changes once the dock has it.
+  setup(1);
+  Fl_Group::current(0);
+  Fl_Dock_Panel *p = new Fl_Dock_Panel(0, 0, 100, 100, "Files");
+  p->end();
+  EXPECT_STREQ(p->name(), "Files");
+  dock->add_panel(p);
+  p->label("Dateien");
+  EXPECT_STREQ(p->name(), "Files");
+  EXPECT_TRUE(dock->find("Files") == p);
+  Fl_Dock_Panel *q = new Fl_Dock_Panel(0, 0, 100, 100, "Files");
+  q->end();
+  q->name("other");
+  EXPECT_STREQ(q->name(), "other");
+  EXPECT_EQ(dock->add_panel(q), 1);
+  // A name the dock has is not taken.
+  q->name("Files");
+  EXPECT_STREQ(q->name(), "other");
+  EXPECT_TRUE(rereads());
+  return true;
+}
+
 TEST(Layout, ShortBuffer) {
   arrange();
   char small[10];
@@ -576,6 +781,150 @@ TEST(Layout, ShortBuffer) {
   EXPECT_EQ(n, (int)strlen(ARRANGED));
   EXPECT_EQ((int)strlen(small), 9);
   EXPECT_EQ(dock->write_layout(0, 0), n);
+  return true;
+}
+
+TEST(Layout, EncodedNames) {
+  setup(0);
+  dock->add_panel(make_panel("two words"));
+  dock->add_panel(make_panel("100%"), FL_DOCK_TAB, dock->find("two words"));
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  EXPECT_TRUE(strstr(saved, "tabs 1 two%20words 100%25\n") != 0);
+  dock->close_panel(dock->find("two words"));
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  EXPECT_STREQ(text(), saved);
+  return true;
+}
+
+TEST(Layout, BadTextChangesNothing) {
+  arrange();
+  const char *bad[] = {
+    "",
+    "fl_dock 2\ndock\n",                                    // a later version
+    "fl_dock 1\n",                                          // no dock
+    "fl_dock 1\ndock\n split h 0.5\n  tabs 0 a\n",          // one share
+    "fl_dock 1\ndock\n split h 0.5 0.5\n  tabs 0 a\n",      // a missing child
+    "fl_dock 1\ndock\n split h 0.5 -1\n  tabs 0 a\n  center\n",
+    "fl_dock 1\ndock\n split x 0.5 0.5\n  tabs 0 a\n  center\n",
+    "fl_dock 1\ndock\n split h 0.5 0.5\n  tabs 0 a\n  tabs 0 a\n",   // a twice
+    "fl_dock 1\ndock\n split h 0.5 0.5\n  center\n  center\n",
+    "fl_dock 1\ndock\n tabs 0 a\nwindow 0 0 100 100\n center\n",     // center floating
+    "fl_dock 1\ndock\n tabs x a\n",
+    "fl_dock 1\ndock\n tabs 0\n",
+    "fl_dock 1\ndock\n  tabs 0 a\n",                        // too deep
+    "fl_dock 1\ndock\n tabs 0 a\n  tabs 0 b\n",             // a child of tabs
+    "fl_dock 1\ndock\nwindow 0 0 0 100\n tabs 0 a\n",
+    0
+  };
+  for (int i = 0; bad[i]; i++) {
+    if (dock->read_layout(bad[i]) != -1) {
+      fprintf(stderr, "bad layout %d accepted\n", i);
+      return false;
+    }
+    EXPECT_STREQ(text(), ARRANGED);
+  }
+  EXPECT_EQ(dock->read_layout((const char *)0), -1);
+  return true;
+}
+
+TEST(Layout, UnknownSectionsIgnored) {
+  arrange();
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  char later[4096];
+  snprintf(later, sizeof(later), "%sstatus bar 3\n extra 1 2\n", saved);
+  EXPECT_EQ(dock->read_layout(later), 0);
+  EXPECT_STREQ(text(), ARRANGED);
+  return true;
+}
+
+TEST(Layout, UnmentionedPanelsStay) {
+  arrange();
+  // A layout from before d existed: d keeps its place.
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  dock->add_panel(make_panel("d"), FL_DOCK_RIGHT, view, 0.3);
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  EXPECT_TRUE(dock->find("d")->docked());
+  EXPECT_TRUE(normal(dock->root()));
+  return true;
+}
+
+static int factory_calls = 0;
+static Fl_Dock_Panel *factory(Fl_Dock *d, const char *name, void *data) {
+  factory_calls++;
+  if (strcmp(name, "made")) return 0;
+  return make_panel(name);
+}
+
+TEST(Layout, Factory) {
+  arrange();
+  factory_calls = 0;
+  dock->panel_factory(factory);
+  EXPECT_EQ(dock->read_layout(
+    "fl_dock 1\n"
+    "dock\n"
+    " split h 0.25 0.75\n"
+    "  tabs 0 a made\n"
+    "  center\n"
+    "closed b c\n"), 0);
+  dock->panel_factory(0);
+  EXPECT_EQ(factory_calls, 1);
+  EXPECT_TRUE(dock->find("made") != 0);
+  EXPECT_TRUE(dock->find("made")->docked());
+  EXPECT_STREQ(text(),
+    "fl_dock 1\n"
+    "dock\n"
+    " split h 0.25 0.75\n"
+    "  tabs 0 a made\n"
+    "  center\n"
+    "closed b c\n"
+    "size 800 600\n");
+  return true;
+}
+
+TEST(Layout, ReadForgetsEdges) {
+  // v closed last, at the end of its split, goes back beside the center
+  // after a layout is read, not past b, which the layout put at the end.
+  setup(1);
+  dock->add_panel(make_panel("b"), FL_DOCK_RIGHT, dock->center(), 0.25);
+  char *saved = strdup(text());
+  dock->add_panel(make_panel("v"), FL_DOCK_LEFT, dock->find("b"), 0.25);
+  dock->close_panel(dock->find("b"));
+  dock->close_panel(dock->find("v"));
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  free(saved);
+  dock->show_panel(dock->find("v"));
+  EXPECT_TRUE(dock->find("v")->x() < dock->find("b")->x());
+  return true;
+}
+
+TEST(Layout, KeptPlaces) {
+  // A layout naming panels the dock does not have yet: place_panel() puts
+  // each where the layout had it, whatever it is asked.
+  arrange();
+  EXPECT_EQ(dock->read_layout(
+    "fl_dock 1\n"
+    "dock\n"
+    " split h 0.2 0.5 0.3\n"
+    "  tabs 0 a later1\n"
+    "  center\n"
+    "  tabs 0 later2\n"
+    "closed b c\n"), 0);
+  dock->place_panel(make_panel("later1"), FL_DOCK_BOTTOM);
+  dock->place_panel(make_panel("later2"), FL_DOCK_BOTTOM);
+  dock->place_panel(make_panel("other"), FL_DOCK_BOTTOM, 0, 0.1);
+  EXPECT_TRUE(normal(dock->root()));
+  Fl_Dock_Panel *l1 = dock->find("later1");
+  Fl_Dock_Panel *l2 = dock->find("later2");
+  EXPECT_TRUE(l1->parent() == dock->find("a")->parent());
+  // later2 is right of the center with its share of the width, 0.3.
+  EXPECT_TRUE(l2->x() > view->x() + view->w());
+  EXPECT_NEAR((double)l2->w() / 800, 0.3, 0.02);
+  // other is below everything.
+  Fl_Dock_Panel *o = dock->find("other");
+  EXPECT_EQ(o->parent()->y() + o->parent()->h(), 600);
   return true;
 }
 

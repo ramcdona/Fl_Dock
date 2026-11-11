@@ -83,6 +83,12 @@ enum Fl_Dock_Where {
 class FL_DOCK_EXPORT Fl_Dock : public Fl_Group {
 public:
   /**
+    Called for a panel name in a layout that the dock does not know, so the
+    application can create the panel; return 0 to leave it out.
+  */
+  typedef Fl_Dock_Panel *(*Panel_Factory)(Fl_Dock *dock, const char *name, void *data);
+
+  /**
     The deepest tree a layout may hold, and so the deepest a dock builds:
     add_panel() refuses a panel that would make the tree deeper.
   */
@@ -96,6 +102,11 @@ private:
   Fl_Dock_Window **windows_;    // floating windows, for the owning dock
   int nwindows_;
   Fl_Dock_Panel *callback_panel_;
+  Panel_Factory factory_;
+  void *factory_data_;
+  struct Kept;                  // a place kept for a panel the dock does not have yet
+  Kept *kept_;
+  int nkept_;
   int keep_sizes_;              // 1 if panels keep their sizes as the dock is resized
 
   int can_take(const Fl_Dock_Panel *p) const;
@@ -118,6 +129,11 @@ private:
   void show_window(Fl_Dock_Window *win);
   Fl_Dock_Window *float_at(Fl_Dock_Panel *p, int given, int X, int Y, int W, int H);
   Fl_Dock_Window *inset_at(Fl_Dock_Panel *p, int given, int X, int Y, int W, int H);
+  Fl_Widget *build_node(void *node);
+  void keep_missing(void *node, void *parent_node, int index);
+  void keep_place(const char *name, const char *ref, int where, double fraction);
+  int kept_place(const char *name, const char **ref, int *where, double *fraction) const;
+  void clear_kept();
 
   friend class Fl_Dock_Tabs;
   friend class Fl_Dock_Window;
@@ -141,6 +157,7 @@ public:
   int add_panel(Fl_Dock_Panel *p, Fl_Dock_Where where = FL_DOCK_LEFT, Fl_Widget *ref = 0, double fraction = 0.25);
   int close_panel(Fl_Dock_Panel *p);
   int show_panel(Fl_Dock_Panel *p);
+  int place_panel(Fl_Dock_Panel *p, Fl_Dock_Where where = FL_DOCK_LEFT, Fl_Widget *ref = 0, double fraction = 0.25);
   Fl_Dock_Window *float_panel(Fl_Dock_Panel *p);
   Fl_Dock_Window *float_panel(Fl_Dock_Panel *p, int X, int Y, int W = 0, int H = 0);
   Fl_Dock_Window *inset_panel(Fl_Dock_Panel *p);
@@ -164,6 +181,7 @@ public:
   }
 
   int write_layout(char *buf, int size) const;
+  int read_layout(const char *text);
 
   void area(int &X, int &Y, int &W, int &H) const;
 
@@ -172,11 +190,16 @@ public:
     in most applications with docking: the part of the dock holding the
     center grows and shrinks, and the panels beside it keep their widths and
     heights until the center would get less than a third of the room.  When
-    off, every part keeps its share of the dock.  On by default.
+    off, every part keeps its share of the dock.  On by default.  It applies
+    to restored layouts too: a layout saved at another size is restored with
+    the panels at the sizes they had.
   */
   void keep_sizes(int on) { owner()->keep_sizes_ = on; }
   /** Returns 1 if docked panels keep their sizes as the dock is resized. */
   int keep_sizes() const { return owner()->keep_sizes_; }
+
+  /** Sets the function that creates panels a layout names but the dock does not know. */
+  void panel_factory(Panel_Factory f, void *data = 0) { factory_ = f; factory_data_ = data; }
 
   /** Returns the panel the last callback was about, or 0 if it was about none. */
   Fl_Dock_Panel *callback_panel() const { return callback_panel_; }
