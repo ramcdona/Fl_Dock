@@ -163,6 +163,8 @@ static void write_node(Layout_Writer &w, Fl_Widget *node, int depth) {
 /**
   Writes the layout of this dock, its floating windows and its closed panels
   into buf, as text ending in a nul, cutting it short if size is too small.
+  While hide_all() or maximize_panel() is in effect, the layout is the one
+  they put back.
   \return the length of the whole text, without the nul; if it is size or
     more the text was cut short, and buf needs to be that plus one long
 */
@@ -174,6 +176,10 @@ int Fl_Dock::write_layout(char *buf, int size) const {
   w.size = size;
   w.len = 0;
   if (buf && size > 0) buf[0] = 0;
+  if (o->saved_kind_ && o->saved_layout_) {
+    w.put("%s", o->saved_layout_);
+    return w.len;
+  }
   w.put("fl_dock %d\n", LAYOUT_VERSION);
   w.put("dock\n");
   if (o->root_) write_node(w, o->root_, 1);
@@ -705,6 +711,11 @@ int Fl_Dock::read_layout(const char *text) {
     return -1;
   }
 
+  // The text is good: from here on the dock changes, and what hide_all()
+  // or maximize_panel() would undo is gone.
+  free(saved_layout_);
+  saved_layout_ = 0;
+  saved_kind_ = 0;
   // Until the stripes are back the tree keeps its shares.
   reading_ = 1;
   close_slide();
@@ -786,6 +797,11 @@ int Fl_Dock::read_layout(const char *text) {
   }
   normalize();
   fit_root();
+  // A center hidden while a panel was maximized is shown again.
+  if (center_ && center_->parent() && !center_->visible()) {
+    if (window() && window()->shown()) center_->show();
+    else center_->set_visible();
+  }
 
   // Keep places for names with no panel.
   keep_missing(dock_root, 0, 0);

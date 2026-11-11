@@ -21,6 +21,8 @@ class Fl_Dock_Tabs;
 class Fl_Dock_Split;
 class Fl_Dock_Window;
 class Fl_Dock_Stripe;
+class Fl_Menu_;
+class Fl_Preferences;
 
 /** The version of Fl_Dock: 10000 * major + 100 * minor + patch. */
 #define FL_DOCK_VERSION 100
@@ -95,13 +97,14 @@ enum Fl_Dock_Stripe_Options {
     floated, inset or docked it from a menu, unpinned or pinned it, moved
     its stripe button, or moved its inset window.
   - FL_REASON_CLOSED: the user closed a panel, from its tab, its window, its
-    stripe button or its shortcut, or a sliding panel slid away.
+    stripe button, its shortcut or the panel menu, or a sliding panel slid
+    away.
   - FL_REASON_OPENED: the user showed a closed panel, or slid one out.
   - FL_REASON_SELECTED: the user selected a panel's tab.
   - FL_REASON_GOT_FOCUS: a panel took the keyboard focus.
   - FL_REASON_CHANGED: the user resized something: dragged a bar between two
     parts of the dock, for which callback_panel() is 0, resized an inset or
-    sliding window.
+    sliding window, or maximized a panel or put everything back.
 
   Dragging a bar or resizing an inset window calls the callback as it moves
   with FL_WHEN_CHANGED and when it is let go with FL_WHEN_RELEASE.  An
@@ -146,6 +149,10 @@ private:
   int stripe_sides_;
   int stripe_options_;
   Fl_Dock_Window *slide_;       // the sliding window shown, or 0
+  char *saved_layout_;          // what hide_all() or maximize_panel() undoes
+  int saved_kind_;              // 1 hide_all, 2 maximize_panel
+  Fl_Menu_ *panel_menu_;
+  char *panel_menu_path_;
   int keep_sizes_;              // 1 if panels keep their sizes as the dock is resized
   int reading_;                 // 1 while a layout is read
   int has_center_;              // 1 while a center is set; center_ is cleared if it is deleted
@@ -160,6 +167,7 @@ private:
   int restore_home(Fl_Dock_Panel *p);
   void take(Fl_Dock_Panel *p);
   void forget(Fl_Dock_Panel *p);
+  void drop_hidden();
   void detach_center();
   void child_gone();
   static void repair_cb(void *data);
@@ -171,6 +179,7 @@ private:
   void refresh();
   void notify(Fl_Dock_Panel *p, Fl_Callback_Reason reason, int step = 0);
   int toggle(Fl_Dock_Panel *p, int user);
+  static void panel_menu_cb(Fl_Widget *w, void *data);
   void add_window(Fl_Dock_Window *w);
   void remove_window(Fl_Dock_Window *w);
   Fl_Dock_Window *new_window(int X, int Y, int W, int H, int kind);
@@ -184,6 +193,8 @@ private:
   void clear_kept();
   void place_stripes();
   void place_slide();
+  void update_panel_menu();
+  void remove_menu_item(Fl_Dock_Panel *p);
   void hide_others_in_group(Fl_Dock_Panel *p, int user);
   int nearest_side(Fl_Dock_Panel *p) const;
   static int dispatch_focus(int event, Fl_Window *w);
@@ -247,6 +258,8 @@ public:
 
   int write_layout(char *buf, int size) const;
   int read_layout(const char *text);
+  int save_layout(Fl_Preferences &prefs, const char *name) const;
+  int load_layout(Fl_Preferences &prefs, const char *name);
 
   void stripes(int sides);
   /** Returns the sides that show stripes, Fl_Dock_Sides or'ed together. */
@@ -280,6 +293,13 @@ public:
   void keep_sizes(int on) { owner()->keep_sizes_ = on; }
   /** Returns 1 if docked panels keep their sizes as the dock is resized. */
   int keep_sizes() const { return owner()->keep_sizes_; }
+
+  int hide_all();
+  int maximize_panel(Fl_Dock_Panel *p);
+  /** Returns 1 after hide_all(), 2 after maximize_panel(), until they are undone; else 0. */
+  int hidden_all() const { return saved_kind_; }
+
+  void panel_menu(Fl_Menu_ *menu, const char *path);
 
   /** Sets the function that creates panels a layout names but the dock does not know. */
   void panel_factory(Panel_Factory f, void *data = 0) { factory_ = f; factory_data_ = data; }

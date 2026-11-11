@@ -109,6 +109,10 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   stripe_sides_ = 0;
   stripe_options_ = 0;
   slide_ = 0;
+  saved_layout_ = 0;
+  saved_kind_ = 0;
+  panel_menu_ = 0;
+  panel_menu_path_ = 0;
   keep_sizes_ = 1;
   reading_ = 0;
   has_center_ = 0;
@@ -156,6 +160,8 @@ Fl_Dock::~Fl_Dock() {
   remove_dispatch();
   free(windows_);
   clear_kept();
+  free(saved_layout_);
+  free(panel_menu_path_);
 }
 
 /** Returns 1 if w is an Fl_Dock_Split. */
@@ -329,6 +335,7 @@ void Fl_Dock::set_root(Fl_Widget *node) {
 */
 void Fl_Dock::center(Fl_Widget *w) {
   if (w == center_) return;
+  drop_hidden();
   Fl_Widget *old = center_;
   if (old && w && old->parent() && (old == root_ || is_split(old->parent()))) {
     center_ = w;
@@ -603,9 +610,12 @@ void Fl_Dock::normalize() {
   refresh();
 }
 
+// Brings what shows the panels' state up to date: the panel menu's checks
+// and the stripes' buttons.
 void Fl_Dock::refresh() {
   Fl_Dock *o = owner();
   if (o->destroying_) return;
+  o->update_panel_menu();
   for (int s = 0; s < 4; s++) {
     if (o->stripe_[s]) o->stripe_[s]->redraw();
   }
@@ -655,6 +665,7 @@ int Fl_Dock::add_panel(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *ref, do
 // Docks p beside or into the node target; see put() for fraction and share.
 int Fl_Dock::dock_at(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *target, double fraction, int share) {
   Fl_Dock_Current keep;
+  drop_hidden();
   // A new group can make the tree one deeper.
   if (where != FL_DOCK_TAB && root_ && tree_depth(root_) >= MAX_DEPTH) return 0;
   // No fraction: the panel's own size, which is what it had when last docked.
@@ -743,6 +754,7 @@ int Fl_Dock::store_panel(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *ref, 
   Fl_Dock *o = owner();
   if (!can_take(p)) return 0;
   p->fix_name();
+  drop_hidden();
   const char *name = 0;
   if (ref && ref == o->center_) name = "";
   else if (ref && is_panel(ref) && ((Fl_Dock_Panel *)ref)->dock() && ((Fl_Dock_Panel *)ref)->dock()->owner() == o) name = ((Fl_Dock_Panel *)ref)->name();
@@ -811,6 +823,7 @@ int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
   if (!p) return 0;
   Fl_Dock *d = p->dock();
   if (!d || d->owner() != owner() || !p->docked()) return 0;
+  drop_hidden();
   if (d == owner()) owner()->remember_home(p);
   d->take(p);
   owner()->store_->add(p);
@@ -819,7 +832,7 @@ int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
 
 /**
   Takes a panel out of the dock for good: out of the tree, its windows and its
-  closed panels and off its stripe.  The panel is
+  closed panels, off its stripe and out of the panel menu.  The panel is
   hidden, has no parent, and belongs to the caller again, who may delete it
   or give it to a dock.  Deleting a panel does this first.  The dock's
   callback is not called.
@@ -828,6 +841,7 @@ int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
 int Fl_Dock::remove_panel(Fl_Dock_Panel *p) {
   Fl_Dock *o = owner();
   if (!p || !p->dock() || p->dock()->owner() != o) return 0;
+  drop_hidden();
   if (o->slide_ && o->slide_->dock()->panel(0) == p) o->close_slide();
   Fl_Dock *d = p->dock();
   if (p->docked()) {
@@ -841,6 +855,16 @@ int Fl_Dock::remove_panel(Fl_Dock_Panel *p) {
   return 1;
 }
 
+// Forgets what hide_all() or maximize_panel() would put back, as the dock
+// is changed while they are in effect.
+void Fl_Dock::drop_hidden() {
+  Fl_Dock *o = owner();
+  if (!o->saved_kind_) return;
+  free(o->saved_layout_);
+  o->saved_layout_ = 0;
+  o->saved_kind_ = 0;
+}
+
 void Fl_Dock::forget(Fl_Dock_Panel *p) {
   Fl_Dock_Drag::forget(p);
   for (int s = 0; s < 4; s++) {
@@ -848,6 +872,7 @@ void Fl_Dock::forget(Fl_Dock_Panel *p) {
   }
   p->stripe(-1, 0);
   if (callback_panel_ == p) callback_panel_ = 0;
+  remove_menu_item(p);
 }
 
 /**
@@ -859,6 +884,7 @@ int Fl_Dock::show_panel(Fl_Dock_Panel *p) {
   if (!p) return 0;
   Fl_Dock *d = p->dock();
   if (!d || d->owner() != owner()) return 0;
+  drop_hidden();
   if (p->docked()) {
     ((Fl_Dock_Tabs *)p->parent())->value(p);
     Fl_Window *win = d->window();
@@ -924,6 +950,7 @@ Fl_Dock_Window *Fl_Dock::float_at(Fl_Dock_Panel *p, int given, int X, int Y, int
   Fl_Dock *o = owner();
   if (!p || !p->dock() || p->dock()->owner() != o) return 0;
   if (!p->docked() && p->dock() != o) return 0;
+  drop_hidden();
   if (!given) {
     if (p->get_float_rect(X, Y, W, H)) {
       given = 1;
@@ -973,6 +1000,7 @@ Fl_Dock_Window *Fl_Dock::inset_at(Fl_Dock_Panel *p, int given, int X, int Y, int
   Fl_Dock *o = owner();
   if (!p || !p->dock() || p->dock()->owner() != o || !o->window()) return 0;
   if (!p->docked() && p->dock() != o) return 0;
+  drop_hidden();
   if (!given) {
     if (p->get_inset_rect(X, Y, W, H)) {
       given = 1;

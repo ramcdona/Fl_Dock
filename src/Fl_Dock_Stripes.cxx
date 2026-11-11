@@ -17,6 +17,8 @@
 #include <FL/Fl_Dock_Tabs.H>
 #include <FL/Fl_Dock_Window.H>
 #include <FL/Fl.H>
+#include <FL/Fl_Menu_.H>
+#include <FL/Fl_Preferences.H>
 #include <FL/fl_string_functions.h>
 #include "Fl_Dock_Drag.H"
 #include <stdlib.h>
@@ -96,6 +98,7 @@ int Fl_Dock::stripe_panel(Fl_Dock_Panel *p, Fl_Dock_Where side, int group, int i
   Fl_Dock *o = owner();
   if (!p || side < FL_DOCK_LEFT || side > FL_DOCK_BOTTOM) return 0;
   if (!p->dock() || p->dock()->owner() != o) return 0;
+  o->drop_hidden();
   if (group < 0) group = p->stripe_group();
   if (group < 0 || group > 1) group = 0;
   if (!o->stripe_[side]) {
@@ -123,6 +126,7 @@ int Fl_Dock::stripe_panel(Fl_Dock_Panel *p, Fl_Dock_Where side, int group, int i
 int Fl_Dock::unstripe_panel(Fl_Dock_Panel *p) {
   Fl_Dock *o = owner();
   if (!p || p->stripe_side() < 0) return 0;
+  o->drop_hidden();
   if (p->mode() == FL_DOCK_MODE_SLIDING) o->pin_panel(p);
   if (o->stripe_[p->stripe_side()]) o->stripe_[p->stripe_side()]->remove(p);
   p->stripe(-1, 0);
@@ -219,6 +223,7 @@ int Fl_Dock::slide_panel(Fl_Dock_Panel *p) {
   Fl_Dock *o = owner();
   if (!p || !p->dock() || p->dock()->owner() != o) return 0;
   if (p->mode() == FL_DOCK_MODE_SLIDING) return 1;
+  o->drop_hidden();
   if (p->stripe_side() < 0) o->stripe_panel(p, (Fl_Dock_Where)o->nearest_side(p));
   if (p->slide_size() <= 0) {
     int frame = 2 * Fl_Dock_Window::frame_size();
@@ -245,6 +250,7 @@ int Fl_Dock::pin_panel(Fl_Dock_Panel *p) {
   Fl_Dock *o = owner();
   if (!p || !p->dock() || p->dock()->owner() != o) return 0;
   if (p->mode() != FL_DOCK_MODE_SLIDING) return 0;
+  o->drop_hidden();
   if (o->slide_ && o->slide_->dock()->panel(0) == p) o->close_slide();
   p->mode(FL_DOCK_MODE_DOCKED);
   int r;
@@ -450,3 +456,178 @@ int Fl_Dock::dispatch(int event, Fl_Window *w) {
   return dispatch_focus(event, w);
 }
 
+// ---- Whole-dock commands -------------------------------------------------------
+
+/**
+  Hides every docked panel and the sliding window, leaving the center; a
+  second call shows them all again exactly as they were.  Changing the dock
+  in between, other than by selecting tabs and moving bars, keeps it as it
+  is then and forgets what a second call would put back.
+  \return 1 if they were hidden, 0 if they were shown again
+*/
+int Fl_Dock::hide_all() {
+  Fl_Dock *o = owner();
+  if (o->saved_kind_) {
+    char *text = o->saved_layout_;
+    o->saved_layout_ = 0;
+    o->saved_kind_ = 0;
+    o->read_layout(text);
+    free(text);
+    return 0;
+  }
+  // Taken before anything changes and kept after, as changing the dock
+  // otherwise forgets it.
+  int n = o->write_layout(0, 0);
+  char *text = (char *)malloc(n + 1);
+  o->write_layout(text, n + 1);
+  o->close_slide();
+  int np;
+  Fl_Dock_Panel **all = o->all_panels(np);
+  for (int i = 0; i < np; i++) {
+    if (all[i]->docked() && all[i]->dock() == o) o->close_panel(all[i]);
+  }
+  free(all);
+  o->place_stripes();
+  o->saved_layout_ = text;
+  o->saved_kind_ = 1;
+  return 1;
+}
+
+/**
+  Gives one panel's tab group the whole dock: the other panels are hidden,
+  and the center too.  A second call, with any panel, or hide_all(), puts
+  everything back exactly as it was.  As for hide_all(), changing the dock
+  in between forgets what would be put back.
+  \return 1 if the panel was maximized, 0 if everything was put back
+*/
+int Fl_Dock::maximize_panel(Fl_Dock_Panel *p) {
+  Fl_Dock *o = owner();
+  if (o->saved_kind_) return o->hide_all();
+  if (!p || !p->docked() || p->dock() != o) return 0;
+  int n = o->write_layout(0, 0);
+  char *text = (char *)malloc(n + 1);
+  o->write_layout(text, n + 1);
+  o->close_slide();
+  Fl_Group *keep = p->parent();
+  int np;
+  Fl_Dock_Panel **all = o->all_panels(np);
+  for (int i = 0; i < np; i++) {
+    Fl_Dock_Panel *r = all[i];
+    if (r->docked() && r->dock() == o && r->parent() != keep) o->close_panel(r);
+  }
+  free(all);
+  // The center leaves the tree while the panel has it all.
+  Fl_Widget *c = o->center_;
+  if (c && c->parent() && c != o->root_ && is_split(c->parent())) {
+    c->hide();
+    ((Fl_Dock_Split *)c->parent())->remove_node(c);
+    o->normalize();
+    o->fit_root();
+  }
+  o->redraw();
+  o->saved_layout_ = text;
+  o->saved_kind_ = 2;
+  return 1;
+}
+
+// ---- Named layouts -------------------------------------------------------------
+
+/**
+  Saves the layout in prefs under name, in a group "layouts", so that an
+  application can keep several and switch between them.
+  \return 1 if it was saved
+*/
+int Fl_Dock::save_layout(Fl_Preferences &prefs, const char *name) const {
+  if (!name || !name[0]) return 0;
+  int n = write_layout(0, 0);
+  char *text = (char *)malloc(n + 1);
+  write_layout(text, n + 1);
+  Fl_Preferences layouts(prefs, "layouts");
+  int ok = layouts.set(name, text);
+  free(text);
+  return ok;
+}
+
+/**
+  Restores the layout saved in prefs under name.
+  \return 0 if it was restored, -1 if there is none or it could not be read
+*/
+int Fl_Dock::load_layout(Fl_Preferences &prefs, const char *name) {
+  if (!name || !name[0]) return -1;
+  Fl_Preferences layouts(prefs, "layouts");
+  if (!layouts.entryExists(name)) return -1;
+  char *text = 0;
+  layouts.get(name, text, "");
+  int r = -1;
+  if (text && text[0]) r = read_layout(text);
+  free(text);
+  return r;
+}
+
+// ---- A menu of panels ------------------------------------------------------------
+
+void Fl_Dock::panel_menu_cb(Fl_Widget *, void *data) {
+  Fl_Dock_Panel *p = (Fl_Dock_Panel *)data;
+  Fl_Dock *d = p->dock();
+  if (d) d->owner()->toggle(p, 1);
+}
+
+/**
+  Puts an item for every panel in menu under path, such as "&View/Panels",
+  checked while the panel is shown; choosing one shows or hides it as its
+  stripe button does.  The dock keeps the items up to date, and rebuilds
+  them when called again, for panels added since.
+*/
+void Fl_Dock::panel_menu(Fl_Menu_ *menu, const char *path) {
+  Fl_Dock *o = owner();
+  o->panel_menu_ = menu;
+  free(o->panel_menu_path_);
+  o->panel_menu_path_ = 0;
+  if (!menu || !path) return;
+  o->panel_menu_path_ = fl_strdup(path);
+  int sub = menu->find_index(path);
+  if (sub >= 0) menu->clear_submenu(sub);
+  int n;
+  Fl_Dock_Panel **all = o->all_panels(n);
+  for (int i = 0; i < n; i++) {
+    Fl_Dock_Panel *p = all[i];
+    if (!p->label()) continue;
+    // A slash in a title is not a submenu.
+    int len = (int)strlen(path) + 2 * (int)strlen(p->label()) + 2;
+    char *item = (char *)malloc(len);
+    int k = snprintf(item, len, "%s/", path);
+    for (const char *c = p->label(); *c; c++) {
+      if (*c == '/' || *c == '\\') item[k++] = '\\';
+      item[k++] = *c;
+    }
+    item[k] = 0;
+    menu->add(item, 0, panel_menu_cb, p, FL_MENU_TOGGLE);
+    free(item);
+  }
+  free(all);
+  o->update_panel_menu();
+}
+
+// Checks the items of the panels that are shown.
+void Fl_Dock::update_panel_menu() {
+  if (!panel_menu_ || !panel_menu_path_) return;
+  const Fl_Menu_Item *items = panel_menu_->menu();
+  if (!items) return;
+  int n = panel_menu_->size();
+  for (int i = 0; i < n; i++) {
+    Fl_Menu_Item *it = (Fl_Menu_Item *)&items[i];
+    if (it->callback() != panel_menu_cb || !it->user_data()) continue;
+    Fl_Dock_Panel *p = (Fl_Dock_Panel *)it->user_data();
+    if (panel_shown(p)) it->set();
+    else it->clear();
+  }
+}
+
+// Removes the item of a panel that leaves the dock.
+void Fl_Dock::remove_menu_item(Fl_Dock_Panel *p) {
+  if (!panel_menu_ || !panel_menu_->menu()) return;
+  for (int i = panel_menu_->size() - 1; i >= 0; i--) {
+    const Fl_Menu_Item &it = panel_menu_->menu()[i];
+    if (it.label() && it.callback() == panel_menu_cb && it.user_data() == p) panel_menu_->remove(i);
+  }
+}

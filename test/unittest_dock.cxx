@@ -25,7 +25,9 @@
 #include <FL/Fl_Dock_Tabs.H>
 #include <FL/Fl_Dock_Window.H>
 #include <FL/Fl_Dock_Stripe.H>
+#include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Menu_Window.H>
+#include <FL/Fl_Preferences.H>
 #include "../src/Fl_Dock_Drag.H"
 #include <math.h>
 #include <stdio.h>
@@ -1327,6 +1329,35 @@ TEST(Stripe, LayoutRoundTrip) {
   return true;
 }
 
+TEST(Stripe, HideAllAndBack) {
+  arrange_stripes();
+  char before[4096];
+  dock->write_layout(before, sizeof(before));
+  EXPECT_EQ(dock->hide_all(), 1);
+  EXPECT_TRUE(dock->root() == view);
+  EXPECT_EQ(dock->hidden_all(), 1);
+  EXPECT_EQ(dock->hide_all(), 0);
+  Fl::do_widget_deletion();
+  EXPECT_STREQ(text(), before);
+  return true;
+}
+
+TEST(Stripe, MaximizeAndBack) {
+  arrange();
+  char before[4096];
+  dock->write_layout(before, sizeof(before));
+  Fl_Dock_Panel *b = dock->find("b");
+  EXPECT_EQ(dock->maximize_panel(b), 1);
+  EXPECT_TRUE(dock->root() == b->parent());
+  EXPECT_EQ(b->parent()->w(), 800);
+  EXPECT_TRUE(!view->visible());
+  EXPECT_EQ(dock->maximize_panel(b), 0);
+  Fl::do_widget_deletion();
+  EXPECT_STREQ(text(), before);
+  EXPECT_TRUE(view->visible());
+  return true;
+}
+
 TEST(Stripe, DropTabOnStripe) {
   arrange_stripes();
   Fl_Dock_Panel *c = dock->find("c");
@@ -1364,6 +1395,35 @@ TEST(Stripe, Shortcut) {
   EXPECT_EQ(key_toggled, 1);
   EXPECT_TRUE(!a->docked());
   Fl::e_state = 0;
+  return true;
+}
+
+TEST(Stripe, PanelMenu) {
+  arrange_stripes();
+  Fl_Group::current(0);
+  Fl_Menu_Bar *bar = new Fl_Menu_Bar(0, 0, 100, 20);
+  dock->panel_menu(bar, "&View/Panels");
+  const Fl_Menu_Item *ia = bar->find_item("&View/Panels/a");
+  EXPECT_TRUE(ia != 0);
+  EXPECT_TRUE(ia->value() != 0);
+  bar->picked(ia);
+  EXPECT_TRUE(!dock->find("a")->docked());
+  EXPECT_TRUE(bar->find_item("&View/Panels/a")->value() == 0);
+  delete bar;
+  dock->panel_menu(0, 0);
+  return true;
+}
+
+TEST(Stripe, NamedLayouts) {
+  arrange_stripes();
+  Fl_Preferences prefs(Fl_Preferences::MEMORY, "fltk.org", "unittest_dock");
+  char before[4096];
+  dock->write_layout(before, sizeof(before));
+  EXPECT_EQ(dock->save_layout(prefs, "work"), 1);
+  dock->close_panel(dock->find("a"));
+  EXPECT_EQ(dock->load_layout(prefs, "work"), 0);
+  EXPECT_STREQ(text(), before);
+  EXPECT_EQ(dock->load_layout(prefs, "nothing"), -1);
   return true;
 }
 
@@ -1776,6 +1836,27 @@ static void count_cb(Fl_Widget *w, void *) {
   calls++;
   last_reason = Fl::callback_reason();
   last_panel = ((Fl_Dock *)w)->callback_panel();
+}
+
+TEST(Callback, CallsDoNotNotify) {
+  arrange_stripes();
+  dock->callback(count_cb);
+  calls = 0;
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->toggle_panel(a);
+  dock->toggle_panel(a);
+  dock->slide_panel(a);
+  dock->pin_panel(a);
+  dock->close_panel(a);
+  dock->show_panel(a);
+  dock->float_panel(a, 10, 10, 200, 200);
+  dock->dock_panel(a);
+  dock->maximize_panel(a);
+  dock->maximize_panel(a);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(calls, 0);
+  dock->callback((Fl_Callback *)0);
+  return true;
 }
 
 TEST(Callback, UserActionsNotify) {

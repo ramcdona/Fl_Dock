@@ -244,7 +244,7 @@ void Fl_Dock_Tabs::show_menu() {
     break;
   }
   if (!p || !d) return;
-  enum { FLOAT = 1000, INSET, DOCK, SLIDE, PIN, CLOSE };
+  enum { FLOAT = 1000, INSET, DOCK, SLIDE, PIN, MAXIMIZE, CLOSE };
   int n = children();
   Fl_Menu_Item *items = (Fl_Menu_Item *)calloc(n + 8, sizeof(Fl_Menu_Item));
   int k = 0;
@@ -286,9 +286,16 @@ void Fl_Dock_Tabs::show_menu() {
     items[k].argument(DOCK);
     k++;
   }
+  // On the main dock: unpin to a stripe, and give the group the whole dock.
   if (!floating && d->stripes()) {
     items[k].label("Slide");
     items[k].argument(SLIDE);
+    k++;
+  }
+  if (!floating) {
+    if (d->hidden_all()) items[k].label("Restore All");
+    else items[k].label("Maximize");
+    items[k].argument(MAXIMIZE);
     k++;
   }
   if (p->dock_flags() & FL_DOCK_CLOSABLE) {
@@ -315,6 +322,9 @@ void Fl_Dock_Tabs::show_menu() {
     if (owner->slide_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
   } else if (a == PIN) {
     if (owner->pin_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
+  } else if (a == MAXIMIZE) {
+    owner->maximize_panel(p);
+    owner->notify(p, FL_REASON_CHANGED);
   } else if (a == CLOSE) {
     if (p->can_close() && owner->close_panel(p)) owner->notify(p, FL_REASON_CLOSED);
   }
