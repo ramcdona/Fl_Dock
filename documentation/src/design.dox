@@ -1,0 +1,254 @@
+/**
+
+\page design How Fl_Dock works
+
+Fl_Dock lets the user arrange an application's panels: side by side, stacked as tabs, or floating in their own
+windows, by dragging them, and lets the application save and restore the arrangement.  It is an extension of FLTK
+1.4 and later, written to FLTK's conventions.
+
+# Goals {#design_goals}
+
+- Work wherever FLTK works: Windows, macOS, X11 and Wayland.  Nothing may depend on placing top-level windows,
+  global mouse positions, translucent windows or a compositor.  Where the platform gives them, screen positions
+  are used as an enhancement: dragging between top-level windows and placing a floating window by the mouse.
+- Be an FLTK library: FLTK's names, style and license, no other dependency, no STL in public headers, no
+  exceptions or RTTI, documented with Doxygen.
+- Make the common case short: an application adds its panels, gives a default layout in a few calls, and gets
+  dragging, tabs, floating windows and saved layouts.
+- Hold any widget as a panel, including an `Fl_Gl_Window`.
+
+# The model: the widget tree {#design_model}
+
+A docking layout is a tree whose inner nodes are splits and whose leaves are tab groups.  Fl_Dock makes the FLTK
+widget tree itself that tree, as Fl_Tile, Fl_Tabs and Fl_Flex do: the groups are the nodes, so there is nothing to
+keep in step and an application can walk or inspect the layout with ordinary FLTK calls.  A saved layout is parsed
+into a small description first, and widgets are touched only once it is known to be good, so restoring is
+all-or-nothing.
+
+| Class | Is | Holds |
+|---|---|---|
+| `Fl_Dock` | the dock: an `Fl_Group` | one node, the root of its tree |
+| `Fl_Dock_Split` | an inner node | two or more nodes side by side or one above another, each with a weight |
+| `Fl_Dock_Tabs` | a leaf | one or more panels as tabs, one shown |
+| `Fl_Dock_Panel` | a dockable panel: an `Fl_Group` | the application's widgets, and a name and a title |
+| `Fl_Dock_Window` | a floating, inset or sliding window | an `Fl_Dock` of its own |
+
+A dock may also have a center: one widget, such as a 3D view, that is a leaf of its own, is never closed or
+floated, and keeps the space a dock gives up when its panels close.  Panels can be docked beside it.
+
+After every change the tree is normalized: an empty tab group is removed, a split with one child is
+replaced by that child, and a split inside a parent of the same orientation is merged into it.  The weights are
+carried along so the sizes do not jump.
+
+# Panels {#design_panels}
+
+A panel's label is its title, shown on its tab.  Its name, which must be unique and stable because layouts are
+saved by name, is the label unless `name()` sets it; the dock keeps the label as the name when it is given the
+panel, so a title changed later does not change the name.  A dock refuses a panel without a name or with one it
+already has.  Flags say whether a panel can be closed, floated, or moved at all.  Closing a panel hides it and
+removes it from the tree but keeps it, together with where it was, so showing it again puts it back.  The dock never
+deletes a panel while the panel belongs to it, so its state survives every move; it deletes its panels, closed ones
+included, with itself, as any FLTK group deletes its children.
+
+# Lifetime and order {#design_lifetime}
+
+- `remove_panel()` takes a panel out of the dock for good, out of its stripes, menus and records too, and gives it
+  back to the application.  Deleting a panel does the same first, so `delete panel` is safe, as for any FLTK child.
+  Deleting a floating window deletes the panels in it, which leave the dock the same way.
+- `center(w)` replaces the center: the new one takes the old one's place, and the old one is hidden and given back
+  to the application.  `center(0)` takes it out.  Deleting the center takes it out of the tree.
+- A layout may be restored before the application's window is shown, the usual order: floating windows are shown
+  with the dock's window and hidden with it, so closing the application's window closes them and `Fl::run()`
+  returns.
+- Closed panels keep their own size while the dock is resized.
+
+# Programmatic layout {#design_layout}
+
+```cpp
+Fl_Dock *dock = new Fl_Dock(0, 25, 800, 575);
+dock->center(view);                                     // the 3D view
+dock->add_panel(files, FL_DOCK_LEFT, 0, 0.25);          // left of everything, a quarter of the width
+dock->add_panel(props, FL_DOCK_BOTTOM, files, 0.5);     // below the file browser
+dock->add_panel(log, FL_DOCK_TAB, props);               // a tab beside the properties
+```
+
+Unlike other groups, a dock does not become the current group when it is made: panels are given to it with
+`add_panel()`, and may be made anywhere.
+
+`add_panel(panel, where, ref, fraction)` places a panel on the given side of another panel, of the center, or of
+the whole dock when `ref` is 0, taking that fraction of the space, or as a tab of `ref`; a panel already in the dock
+is moved.  `float_panel()` floats it, `dock_panel()` docks a floating panel where it was, `close_panel()` closes it
+and `show_panel()` brings it back or forward.  The names end in `_panel` because `add()` and `show()` already mean
+something to every FLTK group.
+
+As the dock is resized, docked panels keep their sizes and the part of the dock holding the center takes the
+change, as in most applications with docking; panels are made smaller in proportion only once the center would
+have less than a third of the room.  `keep_sizes(0)` makes every part keep its share instead.
+
+`place_panel()` is `add_panel()` for a panel created after a layout was restored: if the layout had a panel of that
+name, it goes where the layout put it, and otherwise where the arguments say.  An application that creates its
+panels lazily uses it so they open where the user left them.
+
+Panels are shown and hidden only while they are inside a window.  A panel may hold a subwindow, such as an
+`Fl_Gl_Window`, and a subwindow cannot be mapped, or on macOS even resized, outside a window; a tab group built
+outside one only records which tab it shows, and the dock shows that tab once the group is in place.  For the same
+reason the dock only marks a node visible until its window is shown: `show()` on an `Fl_Gl_Window` whose window is
+not shown yet leaves it drawing nowhere on macOS.
+
+# Dragging {#design_dragging}
+
+A drag starts on a tab, which moves its panel, or on the empty part of a tab strip, which moves the whole group.
+While it lasts, the drop target is found, and the place the panel would take is shown:
+
+1. over a tab strip: as a tab at that position;
+2. within a band along the dock's own edge: beside the whole dock;
+3. over a tab group or the center, in the outer third on any side: beside it on that side;
+4. otherwise, in a tab group's middle: as a tab of it.
+
+The tab strip comes first, because a strip along the top of the dock lies inside the edge band and could otherwise
+never be dropped on.
+
+The indicator is a frame drawn by child windows of the target's top-level window, which stack above an OpenGL
+subwindow on every platform and need no compositor.  Esc cancels a drag, and a drag that ends where it began
+changes nothing.
+
+A drag is ordinary FL_PUSH, FL_DRAG and FL_RELEASE events, which go to the window the drag started in for as long
+as the button is down.  Within that window they are in its coordinates.  To find a target in another of the dock's
+windows, the mouse's screen position is compared with that window's; Windows, macOS and X11 give both.  Wayland
+gives neither, so there a drag only finds targets in its own window, and a panel dropped outside it floats in a new
+window whose place is the compositor's choice.  Moving a panel into another window is always possible from the tab
+strip's menu, which floats a panel or docks it back, so no arrangement depends on dragging between windows.
+
+FLTK 1.5's Fl_Dockable_Group drags groups between windows on every platform, Wayland included, with
+Wayland's `xdg_toplevel_drag`.  Fl_Dock does not use it, so that it works with FLTK 1.4.
+
+# Floating windows {#design_floating}
+
+A floating window holds a whole dock, so panels can be docked into it as into the main one.  It closes when its last
+panel leaves.
+
+An inset window is a floating window kept inside the dock's own window: a subwindow over the dock with a frame drawn by
+Fl_Dock, which the user moves within the dock's area and resizes from any edge or corner.  It has no title bar of its
+own; its tab strips serve as one, so the panel's title, close button and menu appear once.  The part of a strip beside
+the tabs moves the window, and some of it is always kept free of tabs for that.  A sliding window has no title bar
+either; its tab menu offers Pin.  Because it is a subwindow it moves, hides and minimizes with the main window on every
+platform, Wayland included, and needs no window manager.  `inset_panel()` makes one; the tab strip's menu offers Float,
+Float Inside and Dock, whichever do not describe where the panel already is.  The dock keeps its inset windows inside
+its area as it is resized.  A layout saves them as `inset x y w h`, relative to the dock.
+
+A panel has a mode, docked, inset, floating or sliding, and remembers the inset and floating windows it was last in.
+A closed panel keeps its mode, so `show_panel()` opens it the way it was shown before, in a window where it was.  An
+application can give the dock a closed panel with `store_panel()` and set its mode to open it inset at first.  A
+layout saves the mode of closed panels that open in a window as `opens name inset x y w h`.  Every floating
+operation is also available without dragging, from a panel's menu, because dragging between windows is the part most
+at the mercy of the platform.
+
+A floating window is placed where it is asked, or by the mouse, and each time it is shown it is moved and made
+smaller to fit the work area of the screen nearest its middle, so a layout saved with a screen that is gone opens on
+one that is there.  While dragging, floating windows are looked at before the main dock, as they stay above it.
+
+Panels may share a place group, set with `place_group()`: editors for different kinds of item that take turns in
+one place.  Showing one closes the one of its group that is shown and opens it where the last of the group was,
+docked in the same place with the same share or in an inset or floating window at the same place and size, so the
+place belongs to the group rather than to each panel.
+
+# Stripes and sliding panels {#design_stripes}
+
+A dock may show a stripe of buttons on any of its sides, chosen with `stripes()`; a stripe with no buttons takes no
+space unless asked to.  `stripe_panel()` gives a panel a button on a side, in one of two groups, at the start and at
+the end of the stripe.  The button shows the panel's icon, or its title turned along the stripe, and is drawn pressed
+while the panel is shown.
+
+Clicking a button, or pressing the panel's `dock_shortcut()`, shows a hidden panel where it was and gives it the
+keyboard, and hides a shown one.  With `FL_DOCK_STRIPE_FOCUS_FIRST` a click on a shown panel without the keyboard
+gives it the keyboard instead.  Showing a panel hides the others of its stripe group, unless `FL_DOCK_STRIPE_SHARED`
+is set, so a group behaves as tabs whose tabs are on the stripe.  A button's menu pins or unpins its panel, moves the
+button to another side, or takes it off the stripe; a button is also dragged to another place on any stripe, or
+into the tree, which docks its panel there.
+
+A panel is unpinned with `slide_panel()`, or Slide on its tab's menu, or by dropping its tab on a stripe: it leaves
+the tree, keeping its place there, and when shown slides out over the dock beside its stripe in a sliding window,
+which the user resizes from its inner edge.  It slides away on a click anywhere else in the application, other than
+in a menu, a tooltip or while a modal window is up; on Escape that the widget with the keyboard focus does not use;
+or from its stripe button.  `pin_panel()`, or Pin on its tab's menu or its button's menu, docks it where it was.
+
+# The event dispatch {#design_dispatch}
+
+The docks watch every event through `Fl::event_dispatch()`, to see clicks outside a sliding window and to follow the
+keyboard focus, underlining the tab of the group that has it and telling the application with
+`FL_REASON_GOT_FOCUS`.  `Fl_Dock::dispatch()` is installed as the first dock is made, in front of any dispatch the
+application set before, which it calls; it is taken out as the last dock goes.  FLTK keeps a single dispatch
+function, so an application that sets its own after making a dock must have it call the one it replaced, which it
+reads with `Fl::event_dispatch()` first; otherwise the docks stop seeing events.
+
+The sliding window is a subwindow of the dock's window, like an inset window, so it needs no window manager, stacks
+above an OpenGL view, and works on Wayland.
+
+# Whole-dock commands {#design_commands}
+
+`hide_all()` hides every docked panel, leaving the center, and a second call puts them all back.  `maximize_panel()`
+gives one panel's group the whole dock, the center included, until it is called again.  Both undo exactly, by
+restoring the layout they saved first; changing the dock in between, or reading a layout, keeps the dock as it is then
+and forgets what they would put back, and a layout written in between is the one they would put back.  `panel_menu()`
+fills a menu with an item for each panel, checked while it is shown, which the dock keeps up to date.  `save_layout()`
+and `load_layout()` keep named layouts in an `Fl_Preferences`.
+
+# Saving and restoring {#design_saving}
+
+A layout is text, one node per line and indented by depth, with a version line first:
+
+```
+fl_dock 1
+dock
+ split h 0.25 0.75
+  tabs 0 files
+  split v 0.7 0.3
+   center
+   tabs 1 props log
+window 120 80 300 400
+ tabs 0 notes
+closed help
+size 800 575
+```
+
+Stripes are saved as `stripe left name ... | name ...`, the buttons of each group in order, and unpinned panels as
+`sliding name size`; a panel slid out is saved as closed and sliding.  `size` is the size of the dock's area, so a
+layout read in a dock of another size is laid out at that size first and then fitted as the dock is resized, the
+panels keeping their sizes.
+
+`write_layout(buf, size)` writes it, returning the length it needs as `snprintf` does, and `read_layout(text)` reads
+it; `save_layout()` and `load_layout()` keep it in an `Fl_Preferences`.  Names
+are written with spaces, control characters and `%` as `%XX`.  Reading is all-or-nothing: the text is parsed and
+checked first, and the dock is only changed if it is good, otherwise it is left as it was and -1 is returned.  The
+version must be one this library reads, every share positive, every split two or more children, every name once,
+the tree no deeper than `Fl_Dock::MAX_DEPTH`, 1000, and the center only in the dock and only if it has one.
+Top-level sections a later version adds are skipped.  Every state the dock can reach writes a layout it reads back:
+names are unique and not empty, `add_panel()` will not make the tree deeper than a layout may be, and a tree not yet
+in normal form, as while a deleted widget is taken out, is written as its normal form.
+
+Panels are found by name.  A name the dock does not know is passed to the panel factory, if the application gave one,
+which must return a new panel of that name, and if none comes back its place is kept, so `place_panel()` puts the
+panel there when the application creates it later.  Panels the text does not mention go back where they were, so a
+panel new in this version of the application is never lost to an old saved layout.  Floating window positions are
+hints, which Wayland may ignore.
+
+# Notifications {#design_notifications}
+
+As for other FLTK widgets, the dock's callback tells the application what the user did; changes made by calling the
+dock's functions do not call it.  Each change the user makes sets the dock's `changed()` flag, and calls the
+callback if `when()` has `FL_WHEN_CHANGED` or `FL_WHEN_RELEASE`, the default, with FLTK's callback reasons and the
+panel given by `callback_panel()`: `FL_REASON_DRAGGED` when the user moves a panel, `FL_REASON_CLOSED` when they close
+one, `FL_REASON_OPENED` when they show one, `FL_REASON_SELECTED` when they select a tab, `FL_REASON_GOT_FOCUS` when
+a panel takes the keyboard focus, and `FL_REASON_CHANGED` when they drag a bar between two parts of the dock, with no
+panel, resize an inset or sliding window, or maximize a panel.  Bars and window sizes call it as they move with
+`FL_WHEN_CHANGED`, and when let go with `FL_WHEN_RELEASE`, so an application can save its layout on every change.
+
+A panel may refuse to close: when the user closes it, from its tab or its window, the dock asks its virtual
+`can_close()` first.  The tab strip's menu lists every panel in the group, so a tab that does not fit is still
+reached.
+
+# Not provided {#design_not_provided}
+
+Compass-style drop indicators, theming beyond FLTK's box types and colors, animation of sliding windows, and undo.
+
+*/
