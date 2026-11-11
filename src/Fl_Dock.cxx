@@ -611,11 +611,13 @@ int Fl_Dock::dock_at(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *target, d
     ((Fl_Dock_Tabs *)target)->insert_panel(p, -1);
     fit_root();
     redraw();
+    if (!owner_) p->mode(FL_DOCK_MODE_DOCKED);
     return 1;
   }
   Fl_Dock_Tabs *t = new Fl_Dock_Tabs(x(), y(), w(), h());
   t->insert_panel(p, 0);
   put(t, where, target, fraction, share);
+  if (!owner_) p->mode(FL_DOCK_MODE_DOCKED);
   return 1;
 }
 
@@ -786,6 +788,13 @@ int Fl_Dock::show_panel(Fl_Dock_Panel *p) {
     return 1;
   }
   Fl_Dock *o = owner();
+  // A closed panel opens the way it was shown before.
+  if (p->mode() == FL_DOCK_MODE_INSET && o->window()) {
+    if (o->inset_panel(p)) return 1;
+  } else if (p->mode() == FL_DOCK_MODE_FLOATING) {
+    int X, Y, W, H;
+    if (p->get_float_rect(X, Y, W, H) && o->float_panel(p)) return 1;
+  }
   o->restore_home(p);
   return 1;
 }
@@ -856,6 +865,7 @@ Fl_Dock_Window *Fl_Dock::float_at(Fl_Dock_Panel *p, int given, int X, int Y, int
   Fl_Dock_Window *win = o->new_window(X, Y, W, H, 0);
   win->copy_label(p->label());
   win->dock()->add_panel(p, FL_DOCK_LEFT);
+  p->mode(FL_DOCK_MODE_FLOATING);
   return win;
 }
 
@@ -906,6 +916,7 @@ Fl_Dock_Window *Fl_Dock::inset_at(Fl_Dock_Panel *p, int given, int X, int Y, int
   win->copy_label(p->label());
   win->dock()->add_panel(p, FL_DOCK_LEFT);
   win->keep_inside();
+  p->mode(FL_DOCK_MODE_INSET);
   return win;
 }
 

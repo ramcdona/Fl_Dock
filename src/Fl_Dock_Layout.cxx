@@ -39,13 +39,15 @@
     inset 40 30 250 200
      tabs 0 find
     closed help find
+    opens find inset 40 30 250 200
     size 800 575
 
   "split h" lays its children side by side and "split v" one above another,
   each with its share; "tabs" gives the index of the tab shown, then the
   panels' names; "center" is the dock's center.  Each "window" is a floating
   window at x y w h on the screen, and each "inset" an inset window at x y w h
-  in the dock.  "closed" lists the closed panels.
+  in the dock.  "closed" lists the closed panels, and "opens" says that a
+  closed one opens in an inset or floating window at x y w h, not docked.
   "size" is the size of the dock's area, so that panels keep their sizes
   when the layout is restored in a dock of another size.
   Names are encoded so they hold no spaces.  Lines with a
@@ -190,6 +192,26 @@ int Fl_Dock::write_layout(char *buf, int size) const {
     }
     w.put("\n");
   }
+  // How closed panels open again, when not docked.
+  for (int i = 0; i < nclosed; i++) {
+    Fl_Dock_Panel *p = (Fl_Dock_Panel *)o->store_->child(i);
+    int X, Y, W, H;
+    const char *kind = 0;
+    int has_rect = 0;
+    if (p->mode() == FL_DOCK_MODE_INSET) {
+      kind = "inset";
+      has_rect = p->get_inset_rect(X, Y, W, H);
+    } else if (p->mode() == FL_DOCK_MODE_FLOATING) {
+      kind = "window";
+      has_rect = p->get_float_rect(X, Y, W, H);
+    }
+    if (!kind) continue;
+    w.put("opens ");
+    w.name(p->name());
+    // Without a place yet it opens at its own size, in the middle.
+    if (has_rect) w.put(" %s %d %d %d %d\n", kind, X, Y, W, H);
+    else w.put(" %s\n", kind);
+  }
   int ax, ay, aw, ah;
   o->area(ax, ay, aw, ah);
   w.put("size %d %d\n", aw, ah);
@@ -216,6 +238,12 @@ struct Layout_Window {
   int inset;
   int x, y, w, h;
   Layout_Node *root;
+};
+
+struct Layout_Opens {
+  char *name;
+  int inset;
+  int x, y, w, h;
 };
 
 struct Layout_Line {
@@ -464,6 +492,7 @@ Fl_Widget *Fl_Dock::build_node(void *node) {
       if (p->parent()) p->parent()->remove(p);
       p->fix_name();
       t->insert_panel(p, -1);
+      if (!owner_) p->mode(FL_DOCK_MODE_DOCKED);
       if (k == n->selected) sel = p;
     }
     if (t && sel) t->value(sel);
@@ -516,6 +545,8 @@ int Fl_Dock::read_layout(const char *text) {
   int nwins = 0;
   char **closed = 0;
   int nclosed = 0;
+  Layout_Opens *opens = 0;
+  int nopens = 0;
   int saved_w = 0;
   int saved_h = 0;
   int i = 1;
@@ -539,6 +570,18 @@ int Fl_Dock::read_layout(const char *text) {
       if (!win.root) { ok = 0; break; }
       wins = (Layout_Window *)realloc(wins, sizeof(Layout_Window) * (nwins + 1));
       wins[nwins++] = win;
+    } else if (!strcmp(l.tok[0], "opens") && (l.ntok == 7 || l.ntok == 3)) {
+      Layout_Opens op;
+      op.inset = !strcmp(l.tok[2], "inset");
+      op.x = op.y = op.w = op.h = 0;
+      if (!op.inset && strcmp(l.tok[2], "window")) { ok = 0; break; }
+      if (l.ntok == 7 && (!read_int(l.tok[3], op.x) || !read_int(l.tok[4], op.y) ||
+          !read_int(l.tok[5], op.w) || !read_int(l.tok[6], op.h) || op.w <= 0 || op.h <= 0)) { ok = 0; break; }
+      op.name = fl_strdup(l.tok[1]);
+      decode_name(op.name);
+      opens = (Layout_Opens *)realloc(opens, sizeof(Layout_Opens) * (nopens + 1));
+      opens[nopens++] = op;
+      i++;
     } else if (!strcmp(l.tok[0], "size") && l.ntok == 3) {
       if (!read_int(l.tok[1], saved_w) || !read_int(l.tok[2], saved_h) || saved_w <= 0 || saved_h <= 0) { ok = 0; break; }
       i++;
@@ -578,6 +621,8 @@ int Fl_Dock::read_layout(const char *text) {
     free(wins);
     for (int k = 0; k < nclosed; k++) free(closed[k]);
     free(closed);
+    for (int k = 0; k < nopens; k++) free(opens[k].name);
+    free(opens);
     return -1;
   }
 
@@ -647,6 +692,10 @@ int Fl_Dock::read_layout(const char *text) {
     }
     win->dock()->set_root(r);
     win->dock()->normalize();
+    for (int k = 0; k < win->dock()->panels(); k++) {
+      if (lw.inset) win->dock()->panel(k)->mode(FL_DOCK_MODE_INSET);
+      else win->dock()->panel(k)->mode(FL_DOCK_MODE_FLOATING);
+    }
     const char *first = first_name(lw.root);
     Fl_Dock_Panel *fp = 0;
     if (first) fp = find(first);
@@ -673,6 +722,13 @@ int Fl_Dock::read_layout(const char *text) {
   free(all);
   free(was_docked);
 
+  // The closed panels the text lists open docked, unless it says otherwise
+  // below.
+  for (int k = 0; k < nclosed; k++) {
+    Fl_Dock_Panel *p = find(closed[k]);
+    if (p && !p->docked()) p->mode(FL_DOCK_MODE_DOCKED);
+  }
+
   // Laid out first at the size it was saved at, the tree then keeps its
   // panels' sizes as it is fitted to this dock.
   if (saved_w > 0 && root_ && keep_sizes() && center_ && center_->parent()) {
@@ -683,6 +739,21 @@ int Fl_Dock::read_layout(const char *text) {
       fit_root(1);
     }
   }
+
+  // Closed panels that open in a window.
+  for (int k = 0; k < nopens; k++) {
+    Fl_Dock_Panel *p = find(opens[k].name);
+    if (!p || p->docked()) continue;
+    if (opens[k].inset) {
+      p->mode(FL_DOCK_MODE_INSET);
+      if (opens[k].w > 0) p->inset_rect(opens[k].x, opens[k].y, opens[k].w, opens[k].h);
+    } else {
+      p->mode(FL_DOCK_MODE_FLOATING);
+      if (opens[k].w > 0) p->float_rect(opens[k].x, opens[k].y, opens[k].w, opens[k].h);
+    }
+  }
+  for (int k = 0; k < nopens; k++) free(opens[k].name);
+  free(opens);
 
   free_node(dock_root);
   for (int k = 0; k < nwins; k++) free_node(wins[k].root);

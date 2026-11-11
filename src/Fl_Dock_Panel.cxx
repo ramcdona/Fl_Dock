@@ -37,6 +37,7 @@ Fl_Dock_Panel::Fl_Dock_Panel(int X, int Y, int W, int H, const char *L)
   home_where2_ = FL_DOCK_LEFT;
   home_edge_ = 0;
   home_span_ = 0;
+  mode_ = FL_DOCK_MODE_DOCKED;
   for (int i = 0; i < 4; i++) {
     inset_rect_[i] = 0;
     float_rect_[i] = 0;

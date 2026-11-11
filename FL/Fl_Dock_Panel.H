@@ -29,6 +29,19 @@ enum Fl_Dock_Flags {
   FL_DOCK_DEFAULT_FLAGS = 7     ///< all of the above
 };
 
+/**
+  How a panel is shown: docked in the dock's tree, in an inset window inside
+  the dock's window, or in a floating window.  A
+  closed panel keeps the mode it had, and Fl_Dock::show_panel() opens it that
+  way again.
+  \see Fl_Dock_Panel::mode()
+*/
+enum Fl_Dock_Mode {
+  FL_DOCK_MODE_DOCKED = 0,      ///< in the dock's tree
+  FL_DOCK_MODE_INSET,           ///< in an inset window, inside the dock's window
+  FL_DOCK_MODE_FLOATING,        ///< in a floating window of its own
+};
+
 /** The type() of an Fl_Dock_Panel. */
 #define FL_DOCK_PANEL 0xD2
 
@@ -67,6 +80,7 @@ class FL_DOCK_EXPORT Fl_Dock_Panel : public Fl_Group {
   int home_where2_;
   int home_edge_;       // 1 if the panel was at the end of its split, past home_ref()
   char *home_span_;     // the far end of the part home_ref() is the near end of, for home_edge_
+  int mode_;
   int inset_rect_[4];   // the inset window it was last in, relative to the dock; w 0 if none
   int float_rect_[4];   // the floating window it was last in, on the screen; w 0 if none
 
@@ -107,6 +121,10 @@ public:
   Fl_Dock *dock() const;
   int docked() const;
 
+  /** Returns how the panel is shown, or how it opens again if it is closed: an Fl_Dock_Mode. */
+  int mode() const { return mode_; }
+  /** Sets how a closed panel opens again: an Fl_Dock_Mode.  Fl_Dock sets it as the panel moves. */
+  void mode(int m) { mode_ = m; }
   void inset_rect(int X, int Y, int W, int H);
   int get_inset_rect(int &X, int &Y, int &W, int &H) const;
   void float_rect(int X, int Y, int W, int H);

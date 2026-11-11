@@ -759,6 +759,36 @@ TEST(Float, InsetFromFloating) {
   return true;
 }
 
+TEST(Float, ReopenInMode) {
+  // A panel closed from an inset or floating window opens there again.
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Window *w = dock->inset_panel(a, 50, 60, 220, 180);
+  w->position(w->x() + 10, w->y() + 5);    // the user moves it
+  dock->close_panel(a);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(a->mode(), FL_DOCK_MODE_INSET);
+  dock->show_panel(a);
+  EXPECT_EQ(dock->windows(), 1);
+  w = dock->window_at(0);
+  EXPECT_TRUE(w->inset());
+  EXPECT_EQ(w->x() - dock->x(), 60);
+  EXPECT_EQ(w->y() - dock->y(), 65);
+  EXPECT_EQ(w->w(), 220);
+  Fl_Dock_Panel *b = dock->find("b");
+  dock->float_panel(b, 300, 200, 250, 150);
+  dock->close_panel(b);
+  Fl::do_widget_deletion();
+  dock->show_panel(b);
+  EXPECT_EQ(b->mode(), FL_DOCK_MODE_FLOATING);
+  EXPECT_TRUE(!((Fl_Dock_Window *)b->window())->inset());
+  EXPECT_EQ(b->window()->x(), 300);
+  // Docking makes it docked again.
+  dock->dock_panel(a);
+  EXPECT_EQ(a->mode(), FL_DOCK_MODE_DOCKED);
+  return true;
+}
+
 TEST(Float, DockGoesFirst) {
   // A window waiting to be deleted outlives the dock it belonged to.
   arrange();
@@ -769,6 +799,20 @@ TEST(Float, DockGoesFirst) {
   win = 0;
   Fl::do_widget_deletion();
   setup(1);
+  return true;
+}
+
+TEST(Float, StoreAsInset) {
+  // A panel given closed, marked to open inset, opens in an inset window.
+  arrange();
+  Fl_Dock_Panel *s = make_panel("s");
+  dock->store_panel(s);
+  s->mode(FL_DOCK_MODE_INSET);
+  s->inset_rect(10, 20, 200, 150);
+  dock->show_panel(s);
+  EXPECT_TRUE(s->window() != win);
+  EXPECT_TRUE(((Fl_Dock_Window *)s->window())->inset());
+  EXPECT_EQ(s->window()->x() - dock->x(), 10);
   return true;
 }
 
@@ -818,6 +862,54 @@ TEST(Layout, InsetRoundTrip) {
   EXPECT_TRUE(dock->window_at(0)->inset());
   // An inset holding the center is refused.
   EXPECT_EQ(dock->read_layout("fl_dock 1\ndock\n tabs 0 a\ninset 0 0 100 100\n center\n"), -1);
+  return true;
+}
+
+TEST(Layout, OpensRoundTrip) {
+  arrange();
+  dock->inset_panel(dock->find("c"), 40, 30, 250, 200);
+  dock->close_panel(dock->find("c"));
+  Fl::do_widget_deletion();
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  EXPECT_TRUE(strstr(saved, "closed c\nopens c inset 40 30 250 200\n") != 0);
+  dock->find("c")->mode(FL_DOCK_MODE_DOCKED);
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  EXPECT_EQ(dock->find("c")->mode(), FL_DOCK_MODE_INSET);
+  EXPECT_STREQ(text(), saved);
+  EXPECT_EQ(dock->read_layout("fl_dock 1\ndock\n tabs 0 a\nopens c inset 1 2 0 4\n"), -1);
+  return true;
+}
+
+TEST(Layout, ClosedOpensDocked) {
+  // A closed panel the text lists without an "opens" line opens docked,
+  // whatever it was before.
+  arrange();
+  dock->inset_panel(dock->find("c"), 40, 30, 250, 200);
+  dock->close_panel(dock->find("c"));
+  Fl::do_widget_deletion();
+  EXPECT_EQ(dock->find("c")->mode(), FL_DOCK_MODE_INSET);
+  EXPECT_EQ(dock->read_layout("fl_dock 1\ndock\n split h 0.3 0.7\n  tabs 0 a b\n  center\nclosed c\n"), 0);
+  EXPECT_EQ(dock->find("c")->mode(), FL_DOCK_MODE_DOCKED);
+  dock->show_panel(dock->find("c"));
+  EXPECT_TRUE(dock->find("c")->dock() == dock);
+  return true;
+}
+
+TEST(Layout, OpensWithoutPlace) {
+  // A closed panel set to open inset that has not opened yet keeps its mode.
+  arrange();
+  Fl_Dock_Panel *s = make_panel("s");
+  dock->store_panel(s);
+  s->mode(FL_DOCK_MODE_INSET);
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  EXPECT_TRUE(strstr(saved, "opens s inset\n") != 0);
+  s->mode(FL_DOCK_MODE_DOCKED);
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  EXPECT_EQ(s->mode(), FL_DOCK_MODE_INSET);
+  dock->show_panel(s);
+  EXPECT_TRUE(((Fl_Dock_Window *)s->window())->inset());
   return true;
 }
 
