@@ -1009,6 +1009,120 @@ TEST(Drop, DropGroupBesideCenter) {
   return true;
 }
 
+// ---- Removing and deleting ----------------------------------------------------
+
+TEST(Remove, RemovePanel) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  EXPECT_EQ(dock->remove_panel(a), 1);
+  EXPECT_TRUE(a->parent() == 0);
+  EXPECT_TRUE(dock->find("a") == 0);
+  EXPECT_EQ(dock->panels(), 2);
+  EXPECT_TRUE(normal(dock->root()));
+  EXPECT_TRUE(rereads());
+  EXPECT_EQ(dock->remove_panel(a), 0);
+  // It is the caller's again, to give to the dock or delete.
+  dock->add_panel(a, FL_DOCK_RIGHT, view, 0.3);
+  EXPECT_TRUE(a->docked());
+  return true;
+}
+
+TEST(Remove, DeleteDocked) {
+  arrange();
+  delete dock->find("a");
+  Fl::do_widget_deletion();
+  EXPECT_EQ(dock->panels(), 2);
+  EXPECT_TRUE(normal(dock->root()));
+  EXPECT_TRUE(rereads());
+  delete dock->find("c");
+  EXPECT_TRUE(dock->find("b")->visible());
+  EXPECT_TRUE(rereads());
+  return true;
+}
+
+TEST(Remove, DeleteInsetWithDock) {
+  arrange();
+  dock->float_panel(dock->find("a"), 10, 10, 200, 200);
+  dock->inset_panel(dock->find("b"), 10, 10, 200, 200);
+  delete win;
+  win = 0;
+  Fl::do_widget_deletion();
+  setup(1);
+  return true;
+}
+
+TEST(Remove, Center) {
+  arrange();
+  // center(0) gives the center back.
+  dock->center(0);
+  EXPECT_TRUE(dock->center() == 0);
+  EXPECT_TRUE(view->parent() == 0);
+  EXPECT_TRUE(normal(dock->root()));
+  EXPECT_TRUE(strstr(text(), "center") == 0);
+  EXPECT_TRUE(rereads());
+  // A second center replaces the first.
+  dock->center(view);
+  Fl_Group::current(0);
+  Fl_Box *v2 = new Fl_Box(0, 0, 10, 10, "v2");
+  dock->center(v2);
+  EXPECT_TRUE(view->parent() == 0);
+  EXPECT_TRUE(dock->center() == v2);
+  const char *first = strstr(text(), "center");
+  EXPECT_TRUE(first != 0 && strstr(first + 1, "center") == 0);
+  EXPECT_TRUE(rereads());
+  delete view;
+  // Deleting the center takes it out.
+  delete v2;
+  EXPECT_TRUE(dock->center() == 0);
+  EXPECT_TRUE(strstr(text(), "center") == 0);
+  EXPECT_TRUE(rereads());
+  EXPECT_TRUE(normal(dock->root()));
+  view = 0;
+  return true;
+}
+
+TEST(Remove, CenterReplacedInPlace) {
+  // A new center takes the old one's place and size; the tree is as it was,
+  // with the center between panels.
+  arrange();
+  dock->add_panel(make_panel("d"), FL_DOCK_RIGHT, view, 0.2);
+  char *before = strdup(text());
+  int X = view->x();
+  int Y = view->y();
+  int W = view->w();
+  int H = view->h();
+  Fl_Group::current(0);
+  Fl_Box *v2 = new Fl_Box(0, 0, 10, 10, "v2");
+  dock->center(v2);
+  EXPECT_TRUE(view->parent() == 0);
+  EXPECT_TRUE(!view->visible());
+  EXPECT_STREQ(text(), before);
+  EXPECT_EQ(v2->x(), X);
+  EXPECT_EQ(v2->y(), Y);
+  EXPECT_EQ(v2->w(), W);
+  EXPECT_EQ(v2->h(), H);
+  // And back.
+  dock->center(view);
+  EXPECT_TRUE(view->visible());
+  EXPECT_TRUE(v2->parent() == 0);
+  EXPECT_STREQ(text(), before);
+  EXPECT_EQ(view->w(), W);
+  free(before);
+  delete v2;
+  return true;
+}
+
+TEST(Remove, CenterAsRoot) {
+  setup(1);
+  delete view;
+  view = 0;
+  EXPECT_TRUE(dock->root() == 0);
+  EXPECT_TRUE(dock->center() == 0);
+  dock->add_panel(make_panel("a"));
+  EXPECT_TRUE(rereads());
+  return true;
+}
+
 TEST(Drop, SourceDeletedDuringDrag) {
   // A drag whose tab group goes away, as a shortcut closing the dragged
   // panel does, ends.

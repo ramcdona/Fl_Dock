@@ -83,7 +83,17 @@ int Fl_Dock_Panel::get_float_rect(int &X, int &Y, int &W, int &H) const {
   return W > 0;
 }
 
+/**
+  Deletes the panel, taking it out of its dock first, as Fl_Dock::remove_panel()
+  does.
+*/
 Fl_Dock_Panel::~Fl_Dock_Panel() {
+  Fl_Dock *d = dock();
+  if (d) {
+    Fl_Dock *o = d->owner();
+    // A dock deleting its panels forgets them itself.
+    if (!o->destroying_ && !d->destroying_) o->remove_panel(this);
+  }
   free(name_);
   free(home_ref_);
   free(home_ref2_);

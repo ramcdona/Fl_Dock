@@ -105,6 +105,10 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   kept_ = 0;
   nkept_ = 0;
   keep_sizes_ = 1;
+  has_center_ = 0;
+  destroying_ = 0;
+  // A deleted center clears center_.
+  Fl::watch_widget_pointer(center_);
   store_ = new Fl_Group(X, Y, W, H);
   store_->type(FL_DOCK_STORE);
   store_->end();
@@ -114,13 +118,30 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   end();
 }
 
-/** Deletes the dock, its panels, open or closed, and its floating windows. */
+/**
+  Deletes the dock, its panels, open or closed, its center and its floating
+  windows.
+*/
 Fl_Dock::~Fl_Dock() {
+  Fl::remove_timeout(repair_cb, this);
+  // The panels of a floating window's dock leave its owner's
+  // records; the owner's own panels go with everything else.
+  if (owner_ && !owner_->destroying_) {
+    int n;
+    Fl_Dock_Panel **all = all_panels(n);
+    for (int i = n - 1; i >= 0; i--) owner_->forget(all[i]);
+    free(all);
+  }
+  destroying_ = 1;
   while (nwindows_ > 0) {
     Fl_Dock_Window *w = windows_[nwindows_ - 1];
     nwindows_--;
     delete w;
   }
+  // The children are deleted while the dock is whole, so that panels can see
+  // that their dock is deleting them.
+  clear();
+  Fl::release_widget_pointer(center_);
   free(windows_);
   clear_kept();
 }
@@ -247,14 +268,69 @@ void Fl_Dock::set_root(Fl_Widget *node) {
 /**
   Sets the center: a widget, such as a 3D view, that is a leaf of its own and
   is never closed or floated.  Set it before adding panels; the dock takes it
-  as a child and deletes it with itself.  It is set once.
+  as a child and deletes it with itself.  A center set before is hidden,
+  taken out of the dock and given back to the caller, who then owns it, and a
+  new one takes its place; center(0) leaves the dock without one.  Deleting the center
+  takes it out of the dock.
 */
 void Fl_Dock::center(Fl_Widget *w) {
   if (w == center_) return;
-  if (!w || center_) return;
+  Fl_Widget *old = center_;
+  if (old && w && old->parent() && (old == root_ || is_split(old->parent()))) {
+    center_ = w;
+    old->hide();
+    if (old == root_) {
+      remove(old);
+      root_ = 0;
+      set_root(w);
+    } else {
+      ((Fl_Dock_Split *)old->parent())->replace_node(old, w);
+      w->resize(old->x(), old->y(), old->w(), old->h());
+      show_node(w);
+      fit_root();
+      redraw();
+    }
+    return;
+  }
+  if (center_) detach_center();
+  if (!w) return;
   center_ = w;
+  has_center_ = 1;
   if (!root_) set_root(w);
   else put(w, FL_DOCK_RIGHT, 0, 0.75);
+}
+
+// Takes the center out of the tree and forgets it.
+void Fl_Dock::detach_center() {
+  Fl_Widget *c = center_;
+  center_ = 0;
+  has_center_ = 0;
+  c->hide();
+  Fl_Group *p = c->parent();
+  if (is_split(p)) ((Fl_Dock_Split *)p)->remove_node(c);
+  else if (p) p->remove(c);
+  normalize();
+  fit_root();
+  redraw();
+}
+
+/** Called by FLTK as a child leaves the dock. */
+void Fl_Dock::on_remove(int index) {
+  if (child(index) == root_) root_ = 0;
+  child_gone();
+}
+
+// A widget left the tree.  If it was a deleted center, the tree is put in
+// normal form again once the deletion is over.
+void Fl_Dock::child_gone() {
+  if (has_center_ && !center_ && !destroying_) Fl::add_timeout(0.0, repair_cb, this);
+}
+
+void Fl_Dock::repair_cb(void *data) {
+  Fl_Dock *d = (Fl_Dock *)data;
+  d->normalize();
+  d->fit_root();
+  d->redraw();
 }
 
 // The depth of the tree at node: 1 for a leaf.
@@ -450,6 +526,7 @@ Fl_Widget *Fl_Dock::normal_form(Fl_Widget *node, Fl_Widget *center) {
 }
 
 void Fl_Dock::normalize() {
+  if (has_center_ && !center_) has_center_ = 0;
   if (!root_) return;
   Fl_Widget *old = root_;
   Fl_Widget *r = normal_form(old, center_);
@@ -498,6 +575,8 @@ int Fl_Dock::add_panel(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *ref, do
   if (ref && !target) return 0;
   // Taking p out would delete the group it is to go beside.
   if (target && target == p->parent() && ((Fl_Dock_Tabs *)target)->panels() == 1) return 0;
+  Fl_Dock *from = p->dock();
+  if (from && from->owner() != owner()) from->owner()->remove_panel(p);
   return dock_at(p, where, target, fraction, 0);
 }
 
@@ -632,6 +711,33 @@ int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
   d->take(p);
   owner()->store_->add(p);
   return 1;
+}
+
+/**
+  Takes a panel out of the dock for good: out of the tree, its windows and its
+  closed panels, and out of any drag.  The panel is
+  hidden, has no parent, and belongs to the caller again, who may delete it
+  or give it to a dock.  Deleting a panel does this first.  The dock's
+  callback is not called.
+  \return 1 if the panel was this dock's, 0 if not
+*/
+int Fl_Dock::remove_panel(Fl_Dock_Panel *p) {
+  Fl_Dock *o = owner();
+  if (!p || !p->dock() || p->dock()->owner() != o) return 0;
+  Fl_Dock *d = p->dock();
+  if (p->docked()) {
+    d->take(p);
+  } else {
+    p->hide();
+    if (p->parent()) p->parent()->remove(p);
+  }
+  o->forget(p);
+  return 1;
+}
+
+void Fl_Dock::forget(Fl_Dock_Panel *p) {
+  Fl_Dock_Drag::forget(p);
+  if (callback_panel_ == p) callback_panel_ = 0;
 }
 
 /**
@@ -853,7 +959,7 @@ void Fl_Dock::add_window(Fl_Dock_Window *w) {
 // The window no longer belongs to this dock, which may go before it does.
 void Fl_Dock::remove_window(Fl_Dock_Window *w) {
   w->owner_ = 0;
-  w->dock_->owner_ = 0;
+  if (w->dock_) w->dock_->owner_ = 0;
   for (int i = 0; i < nwindows_; i++) {
     if (windows_[i] == w) {
       for (int k = i; k < nwindows_ - 1; k++) windows_[k] = windows_[k + 1];

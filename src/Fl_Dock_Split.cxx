@@ -139,7 +139,8 @@ static Fl_Dock *dock_of(Fl_Widget *w) {
 /**
   Called by FLTK as a child leaves the split.
   A child leaving the split, however it leaves, takes its weight with it;
-  the others share its space in proportion.
+  the others share its space in proportion.  The dock is told, in case the
+  child was its center and is being deleted.
 */
 void Fl_Dock_Split::on_remove(int index) {
   if (nweights_ == children() && index >= 0 && index < nweights_) {
@@ -150,6 +151,8 @@ void Fl_Dock_Split::on_remove(int index) {
       for (int i = 0; i < nweights_; i++) weights_[i] /= (1 - gone);
     }
   }
+  Fl_Dock *d = dock_of(this);
+  if (d) d->child_gone();
 }
 
 /**

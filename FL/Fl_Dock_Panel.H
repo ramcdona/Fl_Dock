@@ -51,7 +51,9 @@ enum Fl_Dock_Flags {
   Panels are created by the application and handed to an Fl_Dock with
   Fl_Dock::add_panel().  The dock moves them between its tab groups and windows
   but never deletes them while they belong to it; it deletes them with
-  itself.
+  itself.  Fl_Dock::remove_panel() gives a panel back to the application,
+  and deleting a panel, as any FLTK child may be deleted, takes it out of its
+  dock first.
 */
 class FL_DOCK_EXPORT Fl_Dock_Panel : public Fl_Group {
   char *name_;

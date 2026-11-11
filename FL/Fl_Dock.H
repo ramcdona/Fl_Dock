@@ -79,6 +79,12 @@ enum Fl_Dock_Where {
   Dragging a bar or resizing an inset window calls the callback as it moves
   with FL_WHEN_CHANGED and when it is let go with FL_WHEN_RELEASE.  An
   application that saves its layout when it changes can save on every call.
+
+  The dock deletes its panels, open or closed, its center and its floating
+  windows with itself.  remove_panel() gives a panel back to the
+  application, and deleting a panel is safe at any time.  A layout may be
+  read before the dock's window is shown; floating windows show and hide
+  with that window.
 */
 class FL_DOCK_EXPORT Fl_Dock : public Fl_Group {
 public:
@@ -108,6 +114,8 @@ private:
   Kept *kept_;
   int nkept_;
   int keep_sizes_;              // 1 if panels keep their sizes as the dock is resized
+  int has_center_;              // 1 while a center is set; center_ is cleared if it is deleted
+  int destroying_;              // 1 while the dock deletes its children
 
   int can_take(const Fl_Dock_Panel *p) const;
   Fl_Dock_Panel **all_panels(int &n) const;
@@ -117,6 +125,10 @@ private:
   int restore(Fl_Dock_Panel *p, const char *ref, int where, double share);
   int restore_home(Fl_Dock_Panel *p);
   void take(Fl_Dock_Panel *p);
+  void forget(Fl_Dock_Panel *p);
+  void detach_center();
+  void child_gone();
+  static void repair_cb(void *data);
   void normalize();
   static Fl_Widget *normal_form(Fl_Widget *node, Fl_Widget *center);
   void set_root(Fl_Widget *node);
@@ -139,6 +151,7 @@ private:
   friend class Fl_Dock_Window;
   friend class Fl_Dock_Drag;
   friend class Fl_Dock_Split;
+  friend class Fl_Dock_Panel;
 
 public:
   Fl_Dock(int X, int Y, int W, int H, const char *L = 0);
@@ -148,6 +161,10 @@ public:
   void draw() FL_OVERRIDE;
   int handle(int event) FL_OVERRIDE;
 
+protected:
+  void on_remove(int index) FL_OVERRIDE;
+
+public:
   /** Returns the root node of the tree, or 0 if the dock is empty. */
   Fl_Widget *root() const { return root_; }
 
@@ -157,6 +174,7 @@ public:
 
   int add_panel(Fl_Dock_Panel *p, Fl_Dock_Where where = FL_DOCK_LEFT, Fl_Widget *ref = 0, double fraction = 0.25);
   int close_panel(Fl_Dock_Panel *p);
+  int remove_panel(Fl_Dock_Panel *p);
   int show_panel(Fl_Dock_Panel *p);
   int place_panel(Fl_Dock_Panel *p, Fl_Dock_Where where = FL_DOCK_LEFT, Fl_Widget *ref = 0, double fraction = 0.25);
   Fl_Dock_Window *float_panel(Fl_Dock_Panel *p);

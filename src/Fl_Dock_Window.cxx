@@ -53,6 +53,13 @@ Fl_Dock_Window::Fl_Dock_Window(int X, int Y, int W, int H, Fl_Dock *owner, Kind 
 }
 
 Fl_Dock_Window::~Fl_Dock_Window() {
+  // The dock goes first, while it still belongs to the owner, so the owner
+  // forgets its panels.
+  if (dock_) {
+    Fl_Dock *d = dock_;
+    dock_ = 0;
+    delete d;
+  }
   // An inset window may go with the window it is in, before its owner.
   if (owner_) {
     owner_->remove_window(this);
