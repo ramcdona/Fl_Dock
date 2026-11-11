@@ -1,0 +1,13 @@
+#
+# CMake package file for the Fl_Dock extension to the Fast Light Tool Kit (FLTK).
+#
+# Defines the target fltk::dock.
+#
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(FLTK CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/Fl_DockTargets.cmake")
+check_required_components(Fl_Dock)
