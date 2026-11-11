@@ -27,16 +27,17 @@ static const int MIN_H = 60;
 // What a press does: move the window, or size it by one edge or two.
 enum { NONE = 0, SIZE_LEFT = 1, SIZE_RIGHT = 2, SIZE_TOP = 4, SIZE_BOTTOM = 8, MOVE = 16 };
 
-/** Returns the width of the frame around an inset window. */
+/** Returns the width of the frame around an inset or sliding window. */
 int Fl_Dock_Window::frame_size() { return FRAME; }
 
 // Creates a window for panels of the dock owner: a floating one, at X, Y on
-// the screen, or an inset one inside the owner's window, at X, Y
+// the screen, or an inset or sliding one inside the owner's window, at X, Y
 // in that window.
 Fl_Dock_Window::Fl_Dock_Window(int X, int Y, int W, int H, Fl_Dock *owner, Kind kind)
   : Fl_Double_Window(X, Y, W, H) {
   owner_ = owner;
   kind_ = kind;
+  slide_side_ = 0;
   action_ = NONE;
   press_x_ = press_y_ = press_w_ = press_h_ = press_mx_ = press_my_ = 0;
   if (kind_ != FLOATING) dock_ = new Fl_Dock(FRAME, FRAME, W - 2 * FRAME, H - 2 * FRAME);
@@ -62,16 +63,22 @@ Fl_Dock_Window::~Fl_Dock_Window() {
   }
   // An inset window may go with the window it is in, before its owner.
   if (owner_) {
+    if (owner_->slide_ == this) owner_->slide_ = 0;
     owner_->remove_window(this);
   }
 }
 
 // Closing the window closes its panels, or docks those that cannot be
-// closed; the window goes when its last panel leaves.
+// closed; the window goes when its last panel leaves.  A sliding window
+// just slides away.
 void Fl_Dock_Window::close_cb(Fl_Widget *, void *data) {
   Fl_Dock_Window *win = (Fl_Dock_Window *)data;
   Fl_Dock *owner = win->owner_;
   if (!owner) return;
+  if (win->sliding()) {
+    owner->close_slide();
+    return;
+  }
   Fl_Dock *d = win->dock_;
   for (;;) {
     if (d->panels() == 0) break;
@@ -131,8 +138,16 @@ static Fl_Dock_Tabs *tabs_at(Fl_Widget *node, int X, int Y) {
 // What a press at X, Y in the window does: move it or size it.  An inset
 // window sizes from any edge, and from both edges near a corner, and moves
 // by the part of a tab strip beside its tabs.
+// A sliding window does not move, and sizes from its inner edge.
 int Fl_Dock_Window::action_at(int X, int Y) const {
   if (kind_ == FLOATING) return NONE;
+  if (kind_ == SLIDING) {
+    if (slide_side_ == 0 && X >= w() - FRAME - 2) return SIZE_RIGHT;
+    if (slide_side_ == 1 && X < FRAME + 2) return SIZE_LEFT;
+    if (slide_side_ == 2 && Y >= h() - FRAME - 2) return SIZE_BOTTOM;
+    if (slide_side_ == 3 && Y < FRAME + 2) return SIZE_TOP;
+    return NONE;
+  }
   if (X >= w() - FRAME - GRIP && Y >= h() - FRAME - GRIP) return SIZE_RIGHT | SIZE_BOTTOM;
   int a = NONE;
   if (X < FRAME) a |= SIZE_LEFT;
@@ -250,6 +265,11 @@ int Fl_Dock_Window::handle(int event) {
       if (a == NONE) break;
       if (owner_) {
         Fl_Dock_Panel *p = dock_->panel(0);
+        // A sliding panel keeps the size the user gave it.
+        if (p && kind_ == SLIDING) {
+          if (slide_side_ < 2) p->slide_size(w());
+          else p->slide_size(h());
+        }
         // Moving the window moves its panels; sizing it changes them.
         Fl_Callback_Reason r = FL_REASON_CHANGED;
         if (a == MOVE) r = FL_REASON_DRAGGED;

@@ -17,6 +17,7 @@
 #include <FL/Fl_Group.H>
 
 class Fl_Dock;
+class Fl_Image;
 
 /**
   Flags of an Fl_Dock_Panel, or'ed together.
@@ -31,7 +32,7 @@ enum Fl_Dock_Flags {
 
 /**
   How a panel is shown: docked in the dock's tree, in an inset window inside
-  the dock's window, or in a floating window.  A
+  the dock's window, in a floating window, or sliding out from a stripe.  A
   closed panel keeps the mode it had, and Fl_Dock::show_panel() opens it that
   way again.
   \see Fl_Dock_Panel::mode()
@@ -40,6 +41,7 @@ enum Fl_Dock_Mode {
   FL_DOCK_MODE_DOCKED = 0,      ///< in the dock's tree
   FL_DOCK_MODE_INSET,           ///< in an inset window, inside the dock's window
   FL_DOCK_MODE_FLOATING,        ///< in a floating window of its own
+  FL_DOCK_MODE_SLIDING          ///< on a stripe, sliding out over the dock when shown
 };
 
 /** The type() of an Fl_Dock_Panel. */
@@ -83,8 +85,14 @@ class FL_DOCK_EXPORT Fl_Dock_Panel : public Fl_Group {
   int mode_;
   int inset_rect_[4];   // the inset window it was last in, relative to the dock; w 0 if none
   int float_rect_[4];   // the floating window it was last in, on the screen; w 0 if none
+  int stripe_side_;     // the Fl_Dock_Where of its stripe, or -1
+  int stripe_group_;
+  Fl_Image *dock_icon_;
+  int dock_shortcut_;
+  int slide_size_;      // the width or height it slides out at; 0 for its own
 
   void fix_name();
+  void stripe(int side, int group) { stripe_side_ = side; stripe_group_ = group; }
   // Where the panel goes back to: next to the panel named home_ref(), the
   // center if it is "", or the whole dock if 0, on side home_where(), with
   // home_fraction() of the space; home_relative() is 1 if that is a
@@ -129,6 +137,23 @@ public:
   int get_inset_rect(int &X, int &Y, int &W, int &H) const;
   void float_rect(int X, int Y, int W, int H);
   int get_float_rect(int &X, int &Y, int &W, int &H) const;
+
+  /** Returns the side of the stripe the panel has a button on, an Fl_Dock_Where, or -1.  \see Fl_Dock::stripe_panel() */
+  int stripe_side() const { return stripe_side_; }
+  /** Returns the group of its stripe the panel's button is in, 0 or 1. */
+  int stripe_group() const { return stripe_group_; }
+  /** Returns the icon of the panel's stripe button, or 0. */
+  Fl_Image *dock_icon() const { return dock_icon_; }
+  /** Sets the icon of the panel's stripe button, which the panel does not own; without one the button shows the title. */
+  void dock_icon(Fl_Image *i) { dock_icon_ = i; }
+  /** Returns the key that shows and hides the panel, or 0. */
+  int dock_shortcut() const { return dock_shortcut_; }
+  /** Sets the key, as for Fl_Button::shortcut(), that shows and hides the panel as its stripe button does. */
+  void dock_shortcut(int s) { dock_shortcut_ = s; }
+  /** Returns the width or height the panel slides out at, or 0 for its own. */
+  int slide_size() const { return slide_size_; }
+  /** Sets the width or height the panel slides out at; the dock sets it as the user resizes it. */
+  void slide_size(int s) { slide_size_ = s; }
 
   /**
     Called when the user asks to close the panel; return 0 to refuse.  The

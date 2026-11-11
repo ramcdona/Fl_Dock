@@ -20,6 +20,7 @@ class Fl_Dock_Panel;
 class Fl_Dock_Tabs;
 class Fl_Dock_Split;
 class Fl_Dock_Window;
+class Fl_Dock_Stripe;
 
 /** The version of Fl_Dock: 10000 * major + 100 * minor + patch. */
 #define FL_DOCK_VERSION 100
@@ -36,6 +37,28 @@ enum Fl_Dock_Where {
   FL_DOCK_TOP,          ///< above it
   FL_DOCK_BOTTOM,       ///< below it
   FL_DOCK_TAB           ///< as a tab of its tab group
+};
+
+/**
+  The sides of a dock that may show stripes, or'ed together.
+  \see Fl_Dock::stripes()
+*/
+enum Fl_Dock_Sides {
+  FL_DOCK_SIDE_LEFT   = 1,      ///< the left side
+  FL_DOCK_SIDE_RIGHT  = 2,      ///< the right side
+  FL_DOCK_SIDE_TOP    = 4,      ///< the top
+  FL_DOCK_SIDE_BOTTOM = 8,      ///< the bottom
+  FL_DOCK_SIDE_ALL    = 15      ///< all four
+};
+
+/**
+  How the stripes behave, or'ed together.
+  \see Fl_Dock::stripe_options()
+*/
+enum Fl_Dock_Stripe_Options {
+  FL_DOCK_STRIPE_FOCUS_FIRST = 1,   ///< clicking the button of a shown panel without the keyboard focus gives it the focus, rather than hiding it
+  FL_DOCK_STRIPE_SHARED      = 2,   ///< panels in one group of a stripe may be shown together; otherwise showing one hides the others
+  FL_DOCK_STRIPE_SHOW_EMPTY  = 4    ///< a stripe with no buttons is shown; otherwise it takes no space
 };
 
 /**
@@ -69,12 +92,16 @@ enum Fl_Dock_Where {
   when() has FL_WHEN_CHANGED or FL_WHEN_RELEASE, the default.  The reasons:
 
   - FL_REASON_DRAGGED: the user moved a panel: dropped it after a drag,
-    floated, inset or docked it from a menu, or moved its inset window.
-  - FL_REASON_CLOSED: the user closed a panel, from its tab or its window.
+    floated, inset or docked it from a menu, unpinned or pinned it, moved
+    its stripe button, or moved its inset window.
+  - FL_REASON_CLOSED: the user closed a panel, from its tab, its window, its
+    stripe button or its shortcut, or a sliding panel slid away.
+  - FL_REASON_OPENED: the user showed a closed panel, or slid one out.
   - FL_REASON_SELECTED: the user selected a panel's tab.
+  - FL_REASON_GOT_FOCUS: a panel took the keyboard focus.
   - FL_REASON_CHANGED: the user resized something: dragged a bar between two
-    parts of the dock, for which callback_panel() is 0, or resized an inset
-    window.
+    parts of the dock, for which callback_panel() is 0, resized an inset or
+    sliding window.
 
   Dragging a bar or resizing an inset window calls the callback as it moves
   with FL_WHEN_CHANGED and when it is let go with FL_WHEN_RELEASE.  An
@@ -84,7 +111,9 @@ enum Fl_Dock_Where {
   windows with itself.  remove_panel() gives a panel back to the
   application, and deleting a panel is safe at any time.  A layout may be
   read before the dock's window is shown; floating windows show and hide
-  with that window.
+  with that window.  The docks see every event through the function
+  dispatch(), which an application that sets its own Fl::event_dispatch()
+  must call.
 */
 class FL_DOCK_EXPORT Fl_Dock : public Fl_Group {
 public:
@@ -113,7 +142,12 @@ private:
   struct Kept;                  // a place kept for a panel the dock does not have yet
   Kept *kept_;
   int nkept_;
+  Fl_Dock_Stripe *stripe_[4];   // by Fl_Dock_Where, or 0
+  int stripe_sides_;
+  int stripe_options_;
+  Fl_Dock_Window *slide_;       // the sliding window shown, or 0
   int keep_sizes_;              // 1 if panels keep their sizes as the dock is resized
+  int reading_;                 // 1 while a layout is read
   int has_center_;              // 1 while a center is set; center_ is cleared if it is deleted
   int destroying_;              // 1 while the dock deletes its children
 
@@ -134,7 +168,9 @@ private:
   void set_root(Fl_Widget *node);
   void fit_root(int keep = 0);
   void remember_home(Fl_Dock_Panel *p);
+  void refresh();
   void notify(Fl_Dock_Panel *p, Fl_Callback_Reason reason, int step = 0);
+  int toggle(Fl_Dock_Panel *p, int user);
   void add_window(Fl_Dock_Window *w);
   void remove_window(Fl_Dock_Window *w);
   Fl_Dock_Window *new_window(int X, int Y, int W, int H, int kind);
@@ -146,10 +182,19 @@ private:
   void keep_place(const char *name, const char *ref, int where, double fraction);
   int kept_place(const char *name, const char **ref, int *where, double *fraction) const;
   void clear_kept();
+  void place_stripes();
+  void place_slide();
+  void hide_others_in_group(Fl_Dock_Panel *p, int user);
+  int nearest_side(Fl_Dock_Panel *p) const;
+  static int dispatch_focus(int event, Fl_Window *w);
+  static int dispatch_event(int event, Fl_Window *w);
+  static void install_dispatch();
+  static void remove_dispatch();
 
   friend class Fl_Dock_Tabs;
   friend class Fl_Dock_Window;
   friend class Fl_Dock_Drag;
+  friend class Fl_Dock_Stripe;
   friend class Fl_Dock_Split;
   friend class Fl_Dock_Panel;
 
@@ -203,6 +248,24 @@ public:
   int write_layout(char *buf, int size) const;
   int read_layout(const char *text);
 
+  void stripes(int sides);
+  /** Returns the sides that show stripes, Fl_Dock_Sides or'ed together. */
+  int stripes() const { return stripe_sides_; }
+  /** Sets how the stripes behave, Fl_Dock_Stripe_Options or'ed together. */
+  void stripe_options(int o) { stripe_options_ = o; }
+  /** Returns how the stripes behave. */
+  int stripe_options() const { return stripe_options_; }
+  Fl_Dock_Stripe *stripe(int side) const;
+  int stripe_panel(Fl_Dock_Panel *p, Fl_Dock_Where side, int group = -1, int index = -1);
+  int unstripe_panel(Fl_Dock_Panel *p);
+  int toggle_panel(Fl_Dock_Panel *p);
+  int panel_shown(const Fl_Dock_Panel *p) const;
+  int slide_panel(Fl_Dock_Panel *p);
+  int pin_panel(Fl_Dock_Panel *p);
+  int open_slide(Fl_Dock_Panel *p);
+  void close_slide();
+  /** Returns the sliding window shown, or 0. */
+  Fl_Dock_Window *sliding() const { return slide_; }
   void area(int &X, int &Y, int &W, int &H) const;
 
   /**
@@ -223,6 +286,8 @@ public:
 
   /** Returns the panel the last callback was about, or 0 if it was about none. */
   Fl_Dock_Panel *callback_panel() const { return callback_panel_; }
+
+  static int dispatch(int event, Fl_Window *w);
 
   static int is_split(const Fl_Widget *w);
   static int is_tabs(const Fl_Widget *w);

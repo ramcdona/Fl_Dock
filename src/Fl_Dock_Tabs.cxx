@@ -244,7 +244,7 @@ void Fl_Dock_Tabs::show_menu() {
     break;
   }
   if (!p || !d) return;
-  enum { FLOAT = 1000, INSET, DOCK, CLOSE };
+  enum { FLOAT = 1000, INSET, DOCK, SLIDE, PIN, CLOSE };
   int n = children();
   Fl_Menu_Item *items = (Fl_Menu_Item *)calloc(n + 8, sizeof(Fl_Menu_Item));
   int k = 0;
@@ -260,23 +260,35 @@ void Fl_Dock_Tabs::show_menu() {
   // window: offer the other two.
   int floating = (d->owner() != d);
   int inset = 0;
+  int sliding = 0;
   if (floating && d->window()) {
     inset = ((Fl_Dock_Window *)d->window())->inset();
+    sliding = ((Fl_Dock_Window *)d->window())->sliding();
   }
   int floatable = (p->dock_flags() & FL_DOCK_FLOATABLE);
+  if (sliding) {
+    items[k].label("Pin");
+    items[k].argument(PIN);
+    k++;
+  }
   if (floatable && (!floating || inset)) {
     items[k].label("Float");
     items[k].argument(FLOAT);
     k++;
   }
-  if (floatable && !inset && d->owner()->window()) {
+  if (floatable && !inset && !sliding && d->owner()->window()) {
     items[k].label("Float Inside");
     items[k].argument(INSET);
     k++;
   }
-  if (floating) {
+  if (floating && !sliding) {
     items[k].label("Dock");
     items[k].argument(DOCK);
+    k++;
+  }
+  if (!floating && d->stripes()) {
+    items[k].label("Slide");
+    items[k].argument(SLIDE);
     k++;
   }
   if (p->dock_flags() & FL_DOCK_CLOSABLE) {
@@ -299,6 +311,10 @@ void Fl_Dock_Tabs::show_menu() {
     if (owner->inset_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
   } else if (a == DOCK) {
     if (owner->dock_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
+  } else if (a == SLIDE) {
+    if (owner->slide_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
+  } else if (a == PIN) {
+    if (owner->pin_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
   } else if (a == CLOSE) {
     if (p->can_close() && owner->close_panel(p)) owner->notify(p, FL_REASON_CLOSED);
   }
@@ -400,6 +416,11 @@ void Fl_Dock_Tabs::draw_strip() {
     fl_push_clip(tx + TAB_PAD, y(), lw, tabs_height);
     if (p->label()) fl_draw(p->label(), tx + TAB_PAD, y(), lw, tabs_height, FL_ALIGN_LEFT);
     fl_pop_clip();
+    // The shown tab of the group with the keyboard focus is underlined.
+    if (sel && Fl::focus() && p->contains(Fl::focus())) {
+      fl_color(FL_SELECTION_COLOR);
+      fl_rectf(tx + 2, y() + tabs_height - 3, tw - 4, 2);
+    }
     if (p->dock_flags() & FL_DOCK_CLOSABLE) {
       int cx = tx + tw - CLOSE_W - 2 + CLOSE_W / 2;
       int cy = y() + tabs_height / 2;
@@ -425,13 +446,16 @@ void Fl_Dock_Tabs::draw_strip() {
 
 /**
   Draws the tab strip and the shown panel.
+  FL_DAMAGE_USER1 alone, as when the keyboard focus comes or goes, draws
+  only the strip.
 */
 void Fl_Dock_Tabs::draw() {
   Fl_Widget *c = value();
-  if (damage() & ~FL_DAMAGE_CHILD) {
+  if (damage() & ~(FL_DAMAGE_CHILD | FL_DAMAGE_USER1)) {
     draw_strip();
     if (c) draw_child(*c);
     return;
   }
+  if (damage() & FL_DAMAGE_USER1) draw_strip();
   if (c) update_child(*c);
 }

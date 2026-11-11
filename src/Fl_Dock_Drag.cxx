@@ -13,6 +13,7 @@
 #include "Fl_Dock_Drag.H"
 #include <FL/Fl_Dock_Panel.H>
 #include <FL/Fl_Dock_Split.H>
+#include <FL/Fl_Dock_Stripe.H>
 #include <FL/Fl_Dock_Tabs.H>
 #include <FL/Fl_Dock_Window.H>
 #include <FL/Fl.H>
@@ -32,10 +33,12 @@ static const double EDGE_SHARE = 0.25;
 static const int FRAME = 3;
 
 static Fl_Dock_Tabs *drag_tabs = 0;     // the tab group dragged from
+static Fl_Dock_Stripe *drag_stripe = 0; // or the stripe whose button is dragged
 
 // What the drag started on.
 static Fl_Widget *drag_source() {
-  return drag_tabs;
+  if (drag_tabs) return drag_tabs;
+  return drag_stripe;
 }
 static Fl_Dock_Panel *drag_panel = 0;   // the panel dragged, 0 for the whole group
 static Fl_Dock_Target drag_target;
@@ -123,6 +126,21 @@ void Fl_Dock_Drag::begin(Fl_Dock_Tabs *tabs, Fl_Dock_Panel *panel) {
   drag_target.dock = 0;
   Fl::focus(tabs);
   if (tabs->window()) tabs->window()->cursor(FL_CURSOR_MOVE);
+  // Stripes with no buttons show while the drag lasts, as places to drop.
+  Fl_Dock *d = dock_of(tabs);
+  if (d) d->owner()->place_stripes();
+}
+
+/** \internal Starts dragging the button of a panel on a stripe. */
+void Fl_Dock_Drag::begin_button(Fl_Dock_Stripe *stripe, Fl_Dock_Panel *panel) {
+  if (!(panel->dock_flags() & FL_DOCK_MOVABLE)) return;
+  drag_stripe = stripe;
+  drag_panel = panel;
+  drag_target.dock = 0;
+  Fl::focus(stripe);
+  if (stripe->window()) stripe->window()->cursor(FL_CURSOR_MOVE);
+  Fl_Dock *d = dock_of(stripe);
+  if (d) d->owner()->place_stripes();
 }
 
 // Where window w is in its top-level window.
@@ -222,6 +240,18 @@ int Fl_Dock_Drag::hit(Fl_Dock *d, int X, int Y, Fl_Dock_Tabs *source, Fl_Dock_Pa
   t.fraction = EDGE_SHARE;
   if (X < d->x() || Y < d->y() || X >= d->x() + d->w() || Y >= d->y() + d->h()) return 0;
   int alone = (!panel || (source && source->panels() == 1));
+  // A stripe: a place among its buttons.
+  for (int s = 0; s < 4; s++) {
+    Fl_Dock_Stripe *st = d->stripe(s);
+    if (!st || !st->visible() || d->owner() != d) continue;
+    if (X < st->x() || Y < st->y() || X >= st->x() + st->w() || Y >= st->y() + st->h()) continue;
+    if (!panel) return 0;
+    t.where = FL_DOCK_STRIPE_TARGET;
+    t.node = st;
+    st->insert_place(X, Y, t.group, t.index);
+    t.x = st->x(); t.y = st->y(); t.w = st->w(); t.h = st->h();
+    return 1;
+  }
   if (!d->root()) {
     t.where = FL_DOCK_LEFT;
     t.x = d->x(); t.y = d->y(); t.w = d->w(); t.h = d->h();
@@ -348,6 +378,21 @@ int Fl_Dock_Drag::drop_list(Fl_Dock_Tabs *source, Fl_Dock_Panel *panel, Fl_Dock_
   Fl_Dock *d = t.dock;
   Fl_Dock_Panel *shown = 0;
   if (source) shown = source->value();
+  if (t.where == FL_DOCK_STRIPE_TARGET) {
+    // A button on a stripe: a panel dragged from the tree is unpinned there.
+    Fl_Dock_Stripe *st = (Fl_Dock_Stripe *)t.node;
+    int g0, i0;
+    int index = t.index;
+    for (int i = 0; i < n; i++) {
+      Fl_Dock_Panel *p = list[i];
+      // Moving along the same group: the index counts the button being moved.
+      if (st->find(p, g0, i0) && g0 == t.group && i0 < index) index--;
+      d->stripe_panel(p, (Fl_Dock_Where)st->side(), t.group, index);
+      if (source) d->slide_panel(p);
+      index++;
+    }
+    return 1;
+  }
   if (t.where == FL_DOCK_TAB) {
     Fl_Dock_Tabs *target = (Fl_Dock_Tabs *)t.node;
     int index = t.index;
@@ -391,6 +436,7 @@ void Fl_Dock_Drag::release() {
   Fl_Window *src = source->window();
   Fl_Dock *src_dock = dock_of(source);
   drag_tabs = 0;
+  drag_stripe = 0;
   drag_panel = 0;
   hide_frame();
   if (src) src->cursor(FL_CURSOR_DEFAULT);
@@ -400,8 +446,12 @@ void Fl_Dock_Drag::release() {
   if (!notify_panel && tabs) notify_panel = tabs->value();
   if (t.dock) {
     if (drop(tabs, panel, t)) o->notify(notify_panel, FL_REASON_DRAGGED);
+    o->place_stripes();
     return;
   }
+  o->place_stripes();
+  // A button released over no place stays where it was.
+  if (!tabs) return;
   // Released outside the drag's top-level window, over no dock: float, if
   // it may and it is not floating already.
   if (src) {
@@ -432,7 +482,11 @@ void Fl_Dock_Drag::release() {
 void Fl_Dock_Drag::cancel() {
   Fl_Widget *source = drag_source();
   if (source && source->window()) source->window()->cursor(FL_CURSOR_DEFAULT);
+  Fl_Dock *d = 0;
+  if (source) d = dock_of(source);
   drag_tabs = 0;
+  drag_stripe = 0;
+  if (d) d->owner()->place_stripes();
   drag_panel = 0;
   drag_target.dock = 0;
   hide_frame();
@@ -444,10 +498,11 @@ void Fl_Dock_Drag::forget(Fl_Dock_Panel *p) {
   if (drag_panel == p || (drag_tabs && p->parent() == drag_tabs)) cancel();
 }
 
-/** \internal Ends a drag that started on w, a tab group being deleted. */
+/** \internal Ends a drag that started on w, a tab group or stripe being deleted. */
 void Fl_Dock_Drag::source_gone(Fl_Widget *w) {
-  if (!w || w != drag_tabs) return;
+  if (!w || (w != drag_tabs && w != drag_stripe)) return;
   drag_tabs = 0;
+  drag_stripe = 0;
   drag_panel = 0;
   drag_target.dock = 0;
   hide_frame();

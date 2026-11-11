@@ -13,6 +13,7 @@
 #include <FL/Fl_Dock.H>
 #include <FL/Fl_Dock_Panel.H>
 #include <FL/Fl_Dock_Split.H>
+#include <FL/Fl_Dock_Stripe.H>
 #include <FL/Fl_Dock_Tabs.H>
 #include <FL/Fl_Dock_Window.H>
 #include <FL/Fl.H>
@@ -104,7 +105,12 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   factory_data_ = 0;
   kept_ = 0;
   nkept_ = 0;
+  for (int s = 0; s < 4; s++) stripe_[s] = 0;
+  stripe_sides_ = 0;
+  stripe_options_ = 0;
+  slide_ = 0;
   keep_sizes_ = 1;
+  reading_ = 0;
   has_center_ = 0;
   destroying_ = 0;
   // A deleted center clears center_.
@@ -116,6 +122,7 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   store_->resizable(0);
   store_->hide();
   end();
+  install_dispatch();
 }
 
 /**
@@ -124,13 +131,17 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
 */
 Fl_Dock::~Fl_Dock() {
   Fl::remove_timeout(repair_cb, this);
-  // The panels of a floating window's dock leave its owner's
+  // Only the dock windows belong to has a sliding window; a window's dock may
+  // outlive that dock.
+  if (!owner_) close_slide();
+  // The panels of a floating window's dock leave its owner's stripes and
   // records; the owner's own panels go with everything else.
   if (owner_ && !owner_->destroying_) {
     int n;
     Fl_Dock_Panel **all = all_panels(n);
     for (int i = n - 1; i >= 0; i--) owner_->forget(all[i]);
     free(all);
+    owner_->place_stripes();
   }
   destroying_ = 1;
   while (nwindows_ > 0) {
@@ -142,6 +153,7 @@ Fl_Dock::~Fl_Dock() {
   // that their dock is deleting them.
   clear();
   Fl::release_widget_pointer(center_);
+  remove_dispatch();
   free(windows_);
   clear_kept();
 }
@@ -175,13 +187,12 @@ void Fl_Dock::resize(int X, int Y, int W, int H) {
   int dy = Y - y();
   Fl_Widget::resize(X, Y, W, H);
   store_->resize(X, Y, W, H);
-  // Inset windows move with the dock, and are kept inside it.
+  // Inset windows move with the dock; placing the stripes keeps them inside.
   for (int i = 0; i < nwindows_; i++) {
     Fl_Dock_Window *win = windows_[i];
     if (win->inset() && (dx || dy)) win->position(win->x() + dx, win->y() + dy);
   }
-  fit_root(1);
-  for (int i = 0; i < nwindows_; i++) windows_[i]->keep_inside();
+  place_stripes();
 }
 
 /** Draws the dock, or only its box and label while it holds nothing. */
@@ -195,10 +206,19 @@ void Fl_Dock::draw() {
 }
 
 /**
-  Shows and hides the dock's floating windows with the dock, so they appear
-  when the application's window is first shown and go when it is closed.
+  Shows or hides a panel whose dock_shortcut() was pressed.  The dock's
+  floating windows are shown and hidden with the dock, so they appear when
+  the application's window is first shown and go when it is closed.
 */
 int Fl_Dock::handle(int event) {
+  // Escape that nothing else used slides the sliding window away.
+  if (event == FL_SHORTCUT && !owner_ && slide_ && Fl::event_key() == FL_Escape) {
+    Fl_Dock_Panel *p = slide_->dock()->panel(0);
+    close_slide();
+    if (center_) center_->take_focus();
+    if (p) notify(p, FL_REASON_CLOSED);
+    return 1;
+  }
   if ((event == FL_SHOW || event == FL_HIDE) && !owner_) {
     int r = Fl_Group::handle(event);
     Fl_Window *top = window();
@@ -210,15 +230,49 @@ int Fl_Dock::handle(int event) {
     }
     return r;
   }
+  if (event == FL_SHORTCUT && !owner_) {
+    int n;
+    Fl_Dock_Panel **all = all_panels(n);
+    Fl_Dock_Panel *hit = 0;
+    for (int i = 0; i < n && !hit; i++) {
+      if (all[i]->dock_shortcut() && Fl::test_shortcut(all[i]->dock_shortcut())) hit = all[i];
+    }
+    free(all);
+    if (hit) {
+      toggle(hit, 1);
+      return 1;
+    }
+  }
   return Fl_Group::handle(event);
 }
 
-/** Gets the area the dock's tree takes: the whole dock. */
+/**
+  Gets the area the dock's tree takes: the dock less its stripes.  Stripes
+  with no buttons take no space unless FL_DOCK_STRIPE_SHOW_EMPTY is set.
+*/
 void Fl_Dock::area(int &X, int &Y, int &W, int &H) const {
   X = x();
   Y = y();
   W = w();
   H = h();
+  int t = Fl_Dock_Stripe::thickness();
+  for (int s = 0; s < 4; s++) {
+    Fl_Dock_Stripe *st = stripe_[s];
+    if (!st || !st->visible()) continue;
+    if (s == FL_DOCK_LEFT) {
+      X += t;
+      W -= t;
+    } else if (s == FL_DOCK_RIGHT) {
+      W -= t;
+    } else if (s == FL_DOCK_TOP) {
+      Y += t;
+      H -= t;
+    } else {
+      H -= t;
+    }
+  }
+  if (W < 0) W = 0;
+  if (H < 0) H = 0;
 }
 
 // Fits the tree to the dock's area.  With keep set the area itself changed,
@@ -227,7 +281,7 @@ void Fl_Dock::fit_root(int keep) {
   if (!root_) return;
   int X, Y, W, H;
   area(X, Y, W, H);
-  if (keep && keep_sizes() && center_ && center_->parent()) Fl_Dock_Split::keep_center_ = center_;
+  if (keep && !reading_ && keep_sizes() && center_ && center_->parent()) Fl_Dock_Split::keep_center_ = center_;
   root_->resize(X, Y, W, H);
   Fl_Dock_Split::keep_center_ = 0;
 }
@@ -485,6 +539,8 @@ void Fl_Dock::take(Fl_Dock_Panel *p) {
         break;
       }
     }
+    // A sliding window whose panel was dragged out of it goes too.
+    if (owner_ && owner_->slide_ == win) owner_->close_slide();
   }
 }
 
@@ -527,10 +583,16 @@ Fl_Widget *Fl_Dock::normal_form(Fl_Widget *node, Fl_Widget *center) {
 
 void Fl_Dock::normalize() {
   if (has_center_ && !center_) has_center_ = 0;
-  if (!root_) return;
+  if (!root_) {
+    refresh();
+    return;
+  }
   Fl_Widget *old = root_;
   Fl_Widget *r = normal_form(old, center_);
-  if (r == old) return;
+  if (r == old) {
+    refresh();
+    return;
+  }
   if (r) {
     set_root(r);
   } else {
@@ -538,6 +600,15 @@ void Fl_Dock::normalize() {
     root_ = 0;
   }
   if (old != center_ && !is_panel(old)) Fl::delete_widget(old);
+  refresh();
+}
+
+void Fl_Dock::refresh() {
+  Fl_Dock *o = owner();
+  if (o->destroying_) return;
+  for (int s = 0; s < 4; s++) {
+    if (o->stripe_[s]) o->stripe_[s]->redraw();
+  }
 }
 
 // Tells the application that the user changed the dock: the changed flag
@@ -547,6 +618,7 @@ void Fl_Dock::normalize() {
 // once with either.
 void Fl_Dock::notify(Fl_Dock_Panel *p, Fl_Callback_Reason reason, int step) {
   Fl_Dock *o = owner();
+  o->refresh();
   o->callback_panel_ = p;
   o->set_changed();
   int w = o->when();
@@ -747,7 +819,7 @@ int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
 
 /**
   Takes a panel out of the dock for good: out of the tree, its windows and its
-  closed panels, and out of any drag.  The panel is
+  closed panels and off its stripe.  The panel is
   hidden, has no parent, and belongs to the caller again, who may delete it
   or give it to a dock.  Deleting a panel does this first.  The dock's
   callback is not called.
@@ -756,6 +828,7 @@ int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
 int Fl_Dock::remove_panel(Fl_Dock_Panel *p) {
   Fl_Dock *o = owner();
   if (!p || !p->dock() || p->dock()->owner() != o) return 0;
+  if (o->slide_ && o->slide_->dock()->panel(0) == p) o->close_slide();
   Fl_Dock *d = p->dock();
   if (p->docked()) {
     d->take(p);
@@ -764,11 +837,16 @@ int Fl_Dock::remove_panel(Fl_Dock_Panel *p) {
     if (p->parent()) p->parent()->remove(p);
   }
   o->forget(p);
+  if (!o->destroying_) o->place_stripes();
   return 1;
 }
 
 void Fl_Dock::forget(Fl_Dock_Panel *p) {
   Fl_Dock_Drag::forget(p);
+  for (int s = 0; s < 4; s++) {
+    if (stripe_[s]) stripe_[s]->remove(p);
+  }
+  p->stripe(-1, 0);
   if (callback_panel_ == p) callback_panel_ = 0;
 }
 
@@ -785,6 +863,7 @@ int Fl_Dock::show_panel(Fl_Dock_Panel *p) {
     ((Fl_Dock_Tabs *)p->parent())->value(p);
     Fl_Window *win = d->window();
     if (win && d != owner()) win->show();
+    refresh();
     return 1;
   }
   Fl_Dock *o = owner();
@@ -970,7 +1049,8 @@ void Fl_Dock::show_window(Fl_Dock_Window *win) {
 Fl_Dock_Window *Fl_Dock::new_window(int X, int Y, int W, int H, int kind) {
   Fl_Dock_Current keep;
   Fl_Dock_Window *win = new Fl_Dock_Window(X, Y, W, H, this, (Fl_Dock_Window::Kind)kind);
-  add_window(win);
+  // A sliding window is the dock's own, not one of its floating windows.
+  if (kind != 2) add_window(win);
   if (kind) Fl_Group::add(win);
   Fl_Window *top = window();
   if (top && top->shown()) {
@@ -1024,17 +1104,20 @@ static int walk_panels(Fl_Widget *node, Fl_Dock_Panel **out, int n, int max) {
   return n;
 }
 
-// The panels of this dock only: docked, then closed.  A
+// The panels of this dock only: docked, then closed, then sliding out.  A
 // floating window's dock has no closed panels; its owner keeps them.
 static int own_panels(const Fl_Dock *d, Fl_Group *store, Fl_Dock_Panel **out, int max) {
   int n = walk_panels(d->root(), out, 0, max);
-  if (d->owner() == d) n = walk_panels(store, out, n, max);
+  if (d->owner() == d) {
+    n = walk_panels(store, out, n, max);
+    if (d->sliding()) n = walk_panels(d->sliding()->dock()->root(), out, n, max);
+  }
   return n;
 }
 
 /**
-  Returns the number of panels: docked in this dock and its windows, and
-  closed.  A floating window's dock counts only its own.
+  Returns the number of panels: docked in this dock and its windows, closed,
+  and sliding out.  A floating window's dock counts only its own.
 */
 int Fl_Dock::panels() const {
   int n = own_panels(this, store_, 0, 0);
@@ -1094,5 +1177,6 @@ Fl_Dock_Panel *Fl_Dock::find(const char *name) const {
   Fl_Dock_Panel *p = find_under(o->root_, name);
   if (!p) p = find_under(o->store_, name);
   for (int i = 0; !p && i < o->nwindows_; i++) p = find_under(o->windows_[i]->dock()->root(), name);
+  if (!p && o->slide_) p = find_under(o->slide_->dock()->root(), name);
   return p;
 }

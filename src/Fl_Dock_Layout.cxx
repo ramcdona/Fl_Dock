@@ -13,6 +13,7 @@
 #include <FL/Fl_Dock.H>
 #include <FL/Fl_Dock_Panel.H>
 #include <FL/Fl_Dock_Split.H>
+#include <FL/Fl_Dock_Stripe.H>
 #include <FL/Fl_Dock_Tabs.H>
 #include <FL/Fl_Dock_Window.H>
 #include <FL/Fl.H>
@@ -184,11 +185,18 @@ int Fl_Dock::write_layout(char *buf, int size) const {
     write_node(w, win->dock()->root(), 1);
   }
   int nclosed = o->store_->children();
-  if (nclosed > 0) {
+  // A panel slid out is written as slid in.
+  Fl_Dock_Panel *out = 0;
+  if (o->slide_) out = o->slide_->dock()->panel(0);
+  if (nclosed > 0 || out) {
     w.put("closed");
     for (int i = 0; i < nclosed; i++) {
       w.put(" ");
       w.name(((Fl_Dock_Panel *)o->store_->child(i))->name());
+    }
+    if (out) {
+      w.put(" ");
+      w.name(out->name());
     }
     w.put("\n");
   }
@@ -212,6 +220,31 @@ int Fl_Dock::write_layout(char *buf, int size) const {
     if (has_rect) w.put(" %s %d %d %d %d\n", kind, X, Y, W, H);
     else w.put(" %s\n", kind);
   }
+  // The stripes' buttons, in order, and the panels that slide out from them.
+  static const char *side_names[4] = { "left", "right", "top", "bottom" };
+  for (int s = 0; s < 4; s++) {
+    Fl_Dock_Stripe *st = o->stripe_[s];
+    if (!st || st->count() == 0) continue;
+    w.put("stripe %s", side_names[s]);
+    for (int g = 0; g < 2; g++) {
+      if (g == 1 && st->buttons(1) > 0) w.put(" |");
+      for (int i = 0; i < st->buttons(g); i++) {
+        w.put(" ");
+        w.name(st->button(g, i)->name());
+      }
+    }
+    w.put("\n");
+  }
+  int np;
+  Fl_Dock_Panel **all = o->all_panels(np);
+  for (int i = 0; i < np; i++) {
+    Fl_Dock_Panel *p = all[i];
+    if (p->mode() != FL_DOCK_MODE_SLIDING) continue;
+    w.put("sliding ");
+    w.name(p->name());
+    w.put(" %d\n", p->slide_size());
+  }
+  free(all);
   int ax, ay, aw, ah;
   o->area(ax, ay, aw, ah);
   w.put("size %d %d\n", aw, ah);
@@ -244,6 +277,13 @@ struct Layout_Opens {
   char *name;
   int inset;
   int x, y, w, h;
+};
+
+// A button on a stripe; for a sliding panel, group holds its size.
+struct Layout_Stripe {
+  char *name;
+  int side;
+  int group;
 };
 
 struct Layout_Line {
@@ -547,6 +587,10 @@ int Fl_Dock::read_layout(const char *text) {
   int nclosed = 0;
   Layout_Opens *opens = 0;
   int nopens = 0;
+  Layout_Stripe *stripes = 0;
+  int nstripes = 0;
+  Layout_Stripe *slidings = 0;
+  int nslidings = 0;
   int saved_w = 0;
   int saved_h = 0;
   int i = 1;
@@ -570,6 +614,37 @@ int Fl_Dock::read_layout(const char *text) {
       if (!win.root) { ok = 0; break; }
       wins = (Layout_Window *)realloc(wins, sizeof(Layout_Window) * (nwins + 1));
       wins[nwins++] = win;
+    } else if (!strcmp(l.tok[0], "stripe") && l.ntok >= 2) {
+      int side = -1;
+      static const char *side_names[4] = { "left", "right", "top", "bottom" };
+      for (int s = 0; s < 4; s++) {
+        if (!strcmp(l.tok[1], side_names[s])) side = s;
+      }
+      if (side < 0) { ok = 0; break; }
+      int group = 0;
+      for (int k = 2; k < l.ntok; k++) {
+        if (!strcmp(l.tok[k], "|")) {
+          group = 1;
+          continue;
+        }
+        Layout_Stripe st;
+        st.side = side;
+        st.group = group;
+        st.name = fl_strdup(l.tok[k]);
+        decode_name(st.name);
+        stripes = (Layout_Stripe *)realloc(stripes, sizeof(Layout_Stripe) * (nstripes + 1));
+        stripes[nstripes++] = st;
+      }
+      i++;
+    } else if (!strcmp(l.tok[0], "sliding") && l.ntok == 3) {
+      Layout_Stripe sl;
+      sl.side = 0;
+      if (!read_int(l.tok[2], sl.group) || sl.group < 0) { ok = 0; break; }
+      sl.name = fl_strdup(l.tok[1]);
+      decode_name(sl.name);
+      slidings = (Layout_Stripe *)realloc(slidings, sizeof(Layout_Stripe) * (nslidings + 1));
+      slidings[nslidings++] = sl;
+      i++;
     } else if (!strcmp(l.tok[0], "opens") && (l.ntok == 7 || l.ntok == 3)) {
       Layout_Opens op;
       op.inset = !strcmp(l.tok[2], "inset");
@@ -623,9 +698,16 @@ int Fl_Dock::read_layout(const char *text) {
     free(closed);
     for (int k = 0; k < nopens; k++) free(opens[k].name);
     free(opens);
+    for (int k = 0; k < nstripes; k++) free(stripes[k].name);
+    free(stripes);
+    for (int k = 0; k < nslidings; k++) free(slidings[k].name);
+    free(slidings);
     return -1;
   }
 
+  // Until the stripes are back the tree keeps its shares.
+  reading_ = 1;
+  close_slide();
   Fl_Group *saved = Fl_Group::current();
   Fl_Group::current(0);
   resolve(this, dock_root, factory_, factory_data_);
@@ -729,6 +811,30 @@ int Fl_Dock::read_layout(const char *text) {
     if (p && !p->docked()) p->mode(FL_DOCK_MODE_DOCKED);
   }
 
+  // The stripes: the buttons named are moved, in order; others stay.
+  for (int k = 0; k < nstripes; k++) {
+    Fl_Dock_Panel *p = find(stripes[k].name);
+    if (p && p->stripe_side() >= 0 && stripe_[p->stripe_side()]) {
+      stripe_[p->stripe_side()]->remove(p);
+      p->stripe(-1, 0);
+    }
+  }
+  for (int k = 0; k < nstripes; k++) {
+    Fl_Dock_Panel *p = find(stripes[k].name);
+    if (p && p->stripe_side() < 0) stripe_panel(p, (Fl_Dock_Where)stripes[k].side, stripes[k].group, -1);
+  }
+  for (int k = 0; k < nslidings; k++) {
+    Fl_Dock_Panel *p = find(slidings[k].name);
+    if (!p || p->docked()) continue;
+    p->mode(FL_DOCK_MODE_SLIDING);
+    p->slide_size(slidings[k].group);
+  }
+  for (int k = 0; k < nstripes; k++) free(stripes[k].name);
+  free(stripes);
+  for (int k = 0; k < nslidings; k++) free(slidings[k].name);
+  free(slidings);
+  reading_ = 0;
+  place_stripes();
   // Laid out first at the size it was saved at, the tree then keeps its
   // panels' sizes as it is fitted to this dock.
   if (saved_w > 0 && root_ && keep_sizes() && center_ && center_->parent()) {

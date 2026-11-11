@@ -38,6 +38,11 @@ Fl_Dock_Panel::Fl_Dock_Panel(int X, int Y, int W, int H, const char *L)
   home_edge_ = 0;
   home_span_ = 0;
   mode_ = FL_DOCK_MODE_DOCKED;
+  stripe_side_ = -1;
+  stripe_group_ = 0;
+  dock_icon_ = 0;
+  dock_shortcut_ = 0;
+  slide_size_ = 0;
   for (int i = 0; i < 4; i++) {
     inset_rect_[i] = 0;
     float_rect_[i] = 0;

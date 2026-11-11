@@ -16,6 +16,7 @@
 #include <FL/Fl_Dock.H>
 
 class Fl_Dock_Tabs;
+class Fl_Dock_Stripe;
 class Fl_Dock_Panel;
 class Fl_Window;
 
@@ -24,12 +25,16 @@ class Fl_Window;
 */
 struct Fl_Dock_Target {
   Fl_Dock *dock;        ///< the dock it goes into, 0 for none
-  Fl_Widget *node;      ///< the leaf it goes beside or into, or 0 for the whole dock
+  Fl_Widget *node;      ///< the leaf it goes beside or into, 0 for the whole dock, or the Fl_Dock_Stripe
+  int group;            ///< for a stripe, the group of buttons it goes into
   int where;            ///< an Fl_Dock_Where
   int index;            ///< for FL_DOCK_TAB, the tab it goes before
   double fraction;      ///< for a side, the share of the space it takes
   int x, y, w, h;       ///< where it would be shown, in its window's coordinates
 };
+
+/** \internal A Fl_Dock_Target::where for a place on a stripe. */
+#define FL_DOCK_STRIPE_TARGET 10
 
 /**
   \internal The drag of a panel, or of a whole tab group, between places in
@@ -40,6 +45,7 @@ class FL_DOCK_EXPORT Fl_Dock_Drag {
 public:
   static int active();
   static void begin(Fl_Dock_Tabs *tabs, Fl_Dock_Panel *panel);
+  static void begin_button(Fl_Dock_Stripe *stripe, Fl_Dock_Panel *panel);
   static void drag();
   static void release();
   static void cancel();

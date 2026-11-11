@@ -44,6 +44,7 @@ set(FL_DOCK_HEADERS
   FL/Fl_Dock_Export.H
   FL/Fl_Dock_Panel.H
   FL/Fl_Dock_Split.H
+  FL/Fl_Dock_Stripe.H
   FL/Fl_Dock_Tabs.H
   FL/Fl_Dock_Window.H
 )
@@ -55,6 +56,8 @@ add_library(fltk_dock
   src/Fl_Dock_Layout.cxx
   src/Fl_Dock_Panel.cxx
   src/Fl_Dock_Split.cxx
+  src/Fl_Dock_Stripe.cxx
+  src/Fl_Dock_Stripes.cxx
   src/Fl_Dock_Tabs.cxx
   src/Fl_Dock_Window.cxx
   ${FL_DOCK_HEADERS}

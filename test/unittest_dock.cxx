@@ -17,11 +17,15 @@
 #include <FL/Fl.H>
 #include <FL/Fl_Window.H>
 #include <FL/Fl_Box.H>
+#include <FL/Fl_Button.H>
+#include <FL/Fl_Input.H>
 #include <FL/Fl_Dock.H>
 #include <FL/Fl_Dock_Panel.H>
 #include <FL/Fl_Dock_Split.H>
 #include <FL/Fl_Dock_Tabs.H>
 #include <FL/Fl_Dock_Window.H>
+#include <FL/Fl_Dock_Stripe.H>
+#include <FL/Fl_Menu_Window.H>
 #include "../src/Fl_Dock_Drag.H"
 #include <math.h>
 #include <stdio.h>
@@ -182,6 +186,8 @@ static void arrange() {
   dock->add_panel(make_panel("b"), FL_DOCK_BOTTOM, dock->find("a"), 0.5);
   dock->add_panel(make_panel("c"), FL_DOCK_TAB, dock->find("b"));
 }
+
+static void arrange_stripes();
 
 static const char *ARRANGED =
   "fl_dock 1\n"
@@ -576,6 +582,23 @@ TEST(Tree, BesideOwnGroupIsRefused) {
   return true;
 }
 
+TEST(Tree, MoveToAnotherDock) {
+  // A panel given to another dock leaves the first one altogether.
+  arrange_stripes();
+  Fl_Group::current(0);
+  Fl_Window *w2 = new Fl_Window(400, 400);
+  Fl_Dock *d2 = new Fl_Dock(0, 0, 400, 400);
+  w2->end();
+  Fl_Dock_Panel *a = dock->find("a");
+  EXPECT_EQ(d2->add_panel(a), 1);
+  EXPECT_EQ(dock->panels(), 2);
+  EXPECT_EQ(d2->panels(), 1);
+  EXPECT_EQ(dock->stripe(FL_DOCK_LEFT)->count(), 1);
+  EXPECT_TRUE(rereads());
+  delete w2;
+  return true;
+}
+
 TEST(Tree, AbsorbKeepsSizes) {
   // Removing the middle of three vertical groups inside a horizontal split
   // inside a vertical split: the inner splits collapse and nothing else moves.
@@ -745,7 +768,6 @@ TEST(Float, InsetSizesFromEveryEdge) {
   Fl::do_widget_deletion();
   return true;
 }
-
 
 TEST(Float, InsetFromFloating) {
   arrange();
@@ -1176,6 +1198,175 @@ TEST(Layout, KeptPlaces) {
   return true;
 }
 
+// ---- Stripes ----------------------------------------------------------------
+
+// The standard arrangement with stripes on every side, a and b on the left.
+static void arrange_stripes() {
+  arrange();
+  dock->stripes(FL_DOCK_SIDE_ALL);
+  dock->stripe_panel(dock->find("a"), FL_DOCK_LEFT);
+  dock->stripe_panel(dock->find("b"), FL_DOCK_LEFT);
+}
+
+TEST(Stripe, AreaAndButtons) {
+  arrange();
+  dock->stripes(FL_DOCK_SIDE_ALL);
+  // Empty stripes take no space.
+  EXPECT_EQ(dock->root()->x(), 0);
+  EXPECT_EQ(dock->root()->w(), 800);
+  dock->stripe_panel(dock->find("a"), FL_DOCK_LEFT);
+  int t = Fl_Dock_Stripe::thickness();
+  EXPECT_EQ(dock->root()->x(), t);
+  EXPECT_EQ(dock->root()->w(), 800 - t);
+  EXPECT_EQ(dock->stripe(FL_DOCK_LEFT)->count(), 1);
+  // A panel has one button: moving it leaves the left stripe empty.
+  dock->stripe_panel(dock->find("a"), FL_DOCK_BOTTOM, 1);
+  EXPECT_EQ(dock->stripe(FL_DOCK_LEFT)->count(), 0);
+  EXPECT_EQ(dock->stripe(FL_DOCK_BOTTOM)->buttons(1), 1);
+  EXPECT_EQ(dock->root()->x(), 0);
+  EXPECT_EQ(dock->root()->h(), 600 - t);
+  dock->stripes(FL_DOCK_SIDE_ALL | FL_DOCK_STRIPE_SHOW_EMPTY * 0);
+  dock->stripe_options(FL_DOCK_STRIPE_SHOW_EMPTY);
+  dock->stripes(FL_DOCK_SIDE_ALL);
+  EXPECT_EQ(dock->root()->x(), t);
+  EXPECT_EQ(dock->root()->w(), 800 - 2 * t);
+  return true;
+}
+
+TEST(Stripe, ToggleDocked) {
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Panel *b = dock->find("b");
+  int aw = a->w();
+  EXPECT_TRUE(dock->panel_shown(a));
+  EXPECT_EQ(dock->toggle_panel(a), 0);
+  EXPECT_TRUE(!a->docked());
+  EXPECT_EQ(dock->toggle_panel(a), 1);
+  EXPECT_TRUE(a->docked());
+  EXPECT_EQ(a->w(), aw);
+  // In one group, showing one hides the other.
+  ((Fl_Dock_Tabs *)b->parent())->value(b);
+  EXPECT_TRUE(dock->panel_shown(b));
+  dock->toggle_panel(a);
+  dock->toggle_panel(a);
+  EXPECT_TRUE(!dock->panel_shown(b));
+  dock->stripe_options(FL_DOCK_STRIPE_SHARED);
+  dock->toggle_panel(b);
+  EXPECT_TRUE(dock->panel_shown(a));
+  EXPECT_TRUE(dock->panel_shown(b));
+  return true;
+}
+
+TEST(Stripe, SlideAndPin) {
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  EXPECT_EQ(dock->slide_panel(a), 1);
+  EXPECT_EQ(a->mode(), FL_DOCK_MODE_SLIDING);
+  EXPECT_TRUE(!a->docked());
+  EXPECT_TRUE(normal(dock->root()));
+  EXPECT_TRUE(strstr(text(), "tabs 0 a") == 0);
+  // Shown, it slides out beside its stripe, at its size, over the tree.
+  EXPECT_EQ(dock->toggle_panel(a), 1);
+  Fl_Dock_Window *s = dock->sliding();
+  EXPECT_TRUE(s != 0);
+  EXPECT_TRUE(s->sliding());
+  EXPECT_TRUE(a->window() == s);
+  EXPECT_EQ(s->x(), Fl_Dock_Stripe::thickness());
+  EXPECT_EQ(s->h(), 600);
+  EXPECT_TRUE(dock->panel_shown(a));
+  // Hidden, it goes back to the stripe, still sliding.
+  EXPECT_EQ(dock->toggle_panel(a), 0);
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(dock->sliding() == 0);
+  EXPECT_EQ(a->mode(), FL_DOCK_MODE_SLIDING);
+  // Pinned, it goes back where it was.
+  EXPECT_EQ(dock->pin_panel(a), 1);
+  EXPECT_TRUE(a->docked());
+  // The stripe took its width from the center.
+  EXPECT_STREQ(text(),
+    "fl_dock 1\n"
+    "dock\n"
+    " split h 0.258442 0.741558\n"
+    "  split v 0.5 0.5\n"
+    "   tabs 0 a\n"
+    "   tabs 1 b c\n"
+    "  center\n"
+    "stripe left a b\n"
+    "size 776 600\n");
+  return true;
+}
+
+TEST(Stripe, SlideWithoutStripe) {
+  // A panel unpinned with no button gets one on its nearest side.
+  arrange();
+  dock->stripes(FL_DOCK_SIDE_ALL);
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->slide_panel(a);
+  EXPECT_EQ(a->stripe_side(), FL_DOCK_LEFT);
+  return true;
+}
+
+TEST(Stripe, LayoutRoundTrip) {
+  arrange_stripes();
+  dock->stripe_panel(dock->find("c"), FL_DOCK_RIGHT, 1);
+  dock->slide_panel(dock->find("b"));
+  dock->find("b")->slide_size(180);
+  char saved[4096];
+  dock->write_layout(saved, sizeof(saved));
+  EXPECT_TRUE(strstr(saved, "stripe left a b\n") != 0);
+  EXPECT_TRUE(strstr(saved, "stripe right | c\n") != 0);
+  EXPECT_TRUE(strstr(saved, "sliding b 180\n") != 0);
+  // Undo it all, then restore.
+  dock->pin_panel(dock->find("b"));
+  dock->unstripe_panel(dock->find("a"));
+  dock->stripe_panel(dock->find("c"), FL_DOCK_TOP);
+  EXPECT_EQ(dock->read_layout(saved), 0);
+  EXPECT_STREQ(text(), saved);
+  EXPECT_EQ(dock->find("b")->mode(), FL_DOCK_MODE_SLIDING);
+  EXPECT_EQ(dock->read_layout("fl_dock 1\ndock\n center\nstripe middle a\n"), -1);
+  return true;
+}
+
+TEST(Stripe, DropTabOnStripe) {
+  arrange_stripes();
+  Fl_Dock_Panel *c = dock->find("c");
+  Fl_Dock_Target t;
+  Fl_Dock_Stripe *st = dock->stripe(FL_DOCK_LEFT);
+  // The far end of the left stripe is its second group.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, st->x() + 5, 590, (Fl_Dock_Tabs *)c->parent(), c, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_STRIPE_TARGET);
+  EXPECT_EQ(t.group, 1);
+  EXPECT_EQ(Fl_Dock_Drag::drop((Fl_Dock_Tabs *)c->parent(), c, t), 1);
+  EXPECT_EQ(c->stripe_side(), FL_DOCK_LEFT);
+  EXPECT_EQ(c->stripe_group(), 1);
+  EXPECT_EQ(c->mode(), FL_DOCK_MODE_SLIDING);
+  // A button dropped in the tree pins its panel there.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, view->x() + view->w() - 20, 300, 0, c, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_RIGHT);
+  EXPECT_EQ(Fl_Dock_Drag::drop(0, c, t), 1);
+  EXPECT_TRUE(c->docked());
+  EXPECT_EQ(c->mode(), FL_DOCK_MODE_DOCKED);
+  EXPECT_EQ(c->stripe_side(), FL_DOCK_LEFT);
+  return true;
+}
+
+static int key_toggled = 0;
+TEST(Stripe, Shortcut) {
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  a->dock_shortcut(FL_ALT + '1');
+  Fl::e_keysym = '1';
+  Fl::e_state = FL_ALT;
+  static char one[2] = "1";
+  Fl::e_text = one;
+  Fl::e_length = 1;
+  key_toggled = dock->handle(FL_SHORTCUT);
+  EXPECT_EQ(key_toggled, 1);
+  EXPECT_TRUE(!a->docked());
+  Fl::e_state = 0;
+  return true;
+}
+
 // ---- Drop targets ------------------------------------------------------------
 
 TEST(Drop, Targets) {
@@ -1287,6 +1478,42 @@ TEST(Remove, DeleteDocked) {
   return true;
 }
 
+TEST(Remove, DeleteSliding) {
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->slide_panel(a);
+  dock->toggle_panel(a);
+  EXPECT_TRUE(dock->sliding() != 0);
+  delete a;
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(dock->sliding() == 0);
+  EXPECT_TRUE(rereads());
+  return true;
+}
+
+TEST(Remove, DeleteFloating) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->float_panel(a, 100, 100, 300, 200);
+  dock->stripes(FL_DOCK_SIDE_ALL);
+  dock->stripe_panel(a, FL_DOCK_LEFT);
+  delete a;
+  Fl::do_widget_deletion();
+  EXPECT_EQ(dock->windows(), 0);
+  EXPECT_EQ(dock->stripe(FL_DOCK_LEFT)->count(), 0);
+  EXPECT_TRUE(rereads());
+  // Deleting a floating window deletes its panels, which leave the dock.
+  Fl_Dock_Panel *b = dock->find("b");
+  dock->stripe_panel(b, FL_DOCK_LEFT);
+  Fl_Dock_Window *w = dock->float_panel(b, 100, 100, 300, 200);
+  delete w;
+  EXPECT_EQ(dock->windows(), 0);
+  EXPECT_TRUE(dock->find("b") == 0);
+  EXPECT_EQ(dock->stripe(FL_DOCK_LEFT)->count(), 0);
+  EXPECT_TRUE(rereads());
+  return true;
+}
+
 TEST(Remove, DeleteInsetWithDock) {
   arrange();
   dock->float_panel(dock->find("a"), 10, 10, 200, 200);
@@ -1370,6 +1597,154 @@ TEST(Remove, CenterAsRoot) {
   return true;
 }
 
+// ---- Event dispatch ------------------------------------------------------------
+
+static Fl_Window *dialog = 0;
+static void delete_dialog_cb(Fl_Widget *, void *) {
+  delete dialog;
+  dialog = 0;
+}
+
+TEST(Dispatch, FocusDeletedByCallback) {
+  // A shortcut whose callback deletes the window holding the keyboard focus,
+  // as dialogs are closed; the dock's event dispatch outlives the focus.
+  setup(1);
+  Fl_Group::current(0);
+  Fl_Button *b = new Fl_Button(0, 0, 10, 10);
+  win->add(b);
+  b->shortcut('q');
+  b->callback(delete_dialog_cb);
+  dialog = new Fl_Window(200, 100);
+  Fl_Input *in = new Fl_Input(50, 10, 100, 25);
+  dialog->end();
+  Fl::focus(in);
+  Fl::e_keysym = 'q';
+  static char q[2] = "q";
+  Fl::e_text = q;
+  Fl::e_length = 1;
+  EXPECT_EQ(Fl::handle(FL_SHORTCUT, win), 1);
+  EXPECT_TRUE(dialog == 0);
+  return true;
+}
+
+static Fl_Event_Dispatch app_prev = 0;
+static int app_events = 0;
+static int app_dispatch(int event, Fl_Window *w) {
+  app_events++;
+  if (app_prev) return app_prev(event, w);
+  return Fl::handle_(event, w);
+}
+
+TEST(Dispatch, InstalledWhileDocksExist) {
+  // The docks' dispatch is set while a dock exists, and an application's
+  // own, set after and chaining to it, keeps it working.
+  setup(1);
+  EXPECT_TRUE(Fl::event_dispatch() == Fl_Dock::dispatch);
+  delete win;
+  win = 0;
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(Fl::event_dispatch() == 0);
+  arrange_stripes();
+  EXPECT_TRUE(Fl::event_dispatch() == Fl_Dock::dispatch);
+  app_prev = Fl::event_dispatch();
+  Fl::event_dispatch(app_dispatch);
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->slide_panel(a);
+  dock->toggle_panel(a);
+  Fl_Group::current(0);
+  Fl_Window *other = new Fl_Window(100, 50);
+  other->end();
+  Fl::e_x = Fl::e_y = 5;
+  Fl::handle(FL_PUSH, other);
+  Fl::handle(FL_RELEASE, other);
+  EXPECT_TRUE(app_events > 0);
+  EXPECT_TRUE(dock->sliding() == 0);
+  delete other;
+  // With the application's in front, the last dock leaves it there.
+  delete win;
+  win = 0;
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(Fl::event_dispatch() == app_dispatch);
+  Fl::event_dispatch(app_prev);
+  app_prev = 0;
+  setup(1);
+  return true;
+}
+
+TEST(Dispatch, SlideStaysForMenus) {
+  // A press in a menu or tooltip window, as a choice in the sliding panel
+  // opens, leaves the slide out; a press elsewhere slides it away.
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->slide_panel(a);
+  dock->toggle_panel(a);
+  EXPECT_TRUE(dock->sliding() != 0);
+  Fl_Group::current(0);
+  Fl_Menu_Window *menu = new Fl_Menu_Window(100, 50);
+  menu->end();
+  menu->set_menu_window();
+  Fl_Menu_Window *tip = new Fl_Menu_Window(100, 50);
+  tip->end();
+  tip->set_tooltip_window();
+  Fl_Window *other = new Fl_Window(100, 50);
+  other->end();
+  Fl::e_x = Fl::e_y = 5;
+  Fl::handle(FL_PUSH, menu);
+  Fl::handle(FL_RELEASE, menu);
+  EXPECT_TRUE(dock->sliding() != 0);
+  Fl::handle(FL_PUSH, tip);
+  Fl::handle(FL_RELEASE, tip);
+  EXPECT_TRUE(dock->sliding() != 0);
+  Fl::handle(FL_PUSH, other);
+  Fl::handle(FL_RELEASE, other);
+  EXPECT_TRUE(dock->sliding() == 0);
+  delete menu;
+  delete tip;
+  delete other;
+  Fl::do_widget_deletion();
+  return true;
+}
+
+TEST(Dispatch, SlideKeepsClicksInIt) {
+  // macOS gives a click in a subwindow to the window it is in: one over the
+  // sliding window leaves it out, and one beside it slides it away.
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->slide_panel(a);
+  dock->toggle_panel(a);
+  Fl_Dock_Window *s = dock->sliding();
+  EXPECT_TRUE(s != 0);
+  Fl::e_x = s->x() + s->w() / 2;
+  Fl::e_y = s->y() + s->h() / 2;
+  Fl::handle(FL_PUSH, win);
+  Fl::handle(FL_RELEASE, win);
+  EXPECT_TRUE(dock->sliding() == s);
+  Fl::e_x = s->x() + s->w() + 10;
+  Fl::handle(FL_PUSH, win);
+  Fl::handle(FL_RELEASE, win);
+  EXPECT_TRUE(dock->sliding() == 0);
+  Fl::do_widget_deletion();
+  return true;
+}
+
+TEST(Dispatch, EscapeSlidesAway) {
+  // Escape, which reaches the dock only if nothing used it, slides the panel away.
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->slide_panel(a);
+  dock->toggle_panel(a);
+  EXPECT_TRUE(dock->sliding() != 0);
+  Fl::e_keysym = 'x';
+  EXPECT_EQ(dock->handle(FL_SHORTCUT), 0);
+  EXPECT_TRUE(dock->sliding() != 0);
+  Fl::e_keysym = FL_Escape;
+  EXPECT_EQ(dock->handle(FL_SHORTCUT), 1);
+  EXPECT_TRUE(dock->sliding() == 0);
+  Fl::e_keysym = 0;
+  Fl::do_widget_deletion();
+  return true;
+}
+
 TEST(Drop, SourceDeletedDuringDrag) {
   // A drag whose tab group goes away, as a shortcut closing the dragged
   // panel does, ends.
@@ -1401,6 +1776,44 @@ static void count_cb(Fl_Widget *w, void *) {
   calls++;
   last_reason = Fl::callback_reason();
   last_panel = ((Fl_Dock *)w)->callback_panel();
+}
+
+TEST(Callback, UserActionsNotify) {
+  arrange_stripes();
+  dock->callback(count_cb);
+  calls = 0;
+  Fl_Dock_Panel *a = dock->find("a");
+  // A click on the stripe button hides a.
+  Fl_Dock_Stripe *st = dock->stripe(FL_DOCK_LEFT);
+  int bx, by, bw, bh;
+  st->button_box(0, 0, bx, by, bw, bh);
+  mouse(st, FL_PUSH, bx + 2, by + 2);
+  mouse(st, FL_RELEASE, bx + 2, by + 2);
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(last_reason, FL_REASON_CLOSED);
+  EXPECT_TRUE(last_panel == a);
+  EXPECT_TRUE(!a->docked());
+  // Its shortcut shows it again.
+  a->dock_shortcut(FL_ALT + '1');
+  Fl::e_keysym = '1';
+  Fl::e_state = FL_ALT;
+  static char one[2] = "1";
+  Fl::e_text = one;
+  Fl::e_length = 1;
+  EXPECT_EQ(dock->handle(FL_SHORTCUT), 1);
+  Fl::e_state = 0;
+  EXPECT_EQ(calls, 2);
+  EXPECT_EQ(last_reason, FL_REASON_OPENED);
+  // With FL_WHEN_NEVER only the changed flag tells.
+  dock->when(FL_WHEN_NEVER);
+  dock->clear_changed();
+  mouse(st, FL_PUSH, bx + 2, by + 2);
+  mouse(st, FL_RELEASE, bx + 2, by + 2);
+  EXPECT_EQ(calls, 2);
+  EXPECT_TRUE(dock->changed() != 0);
+  dock->when(FL_WHEN_RELEASE);
+  dock->callback((Fl_Callback *)0);
+  return true;
 }
 
 TEST(Callback, BarDrag) {

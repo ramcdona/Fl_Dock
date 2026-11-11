@@ -11,7 +11,7 @@
 //
 
 // Checks that OpenGL windows draw wherever a dock puts them: as the center,
-// in a panel, beside panels, floated, inset and docked again.  Each view clears to
+// in a panel, beside panels, floated, inset, sliding and docked again.  Each view clears to
 // its own color and reads back its middle pixel; a view that is not attached
 // to anything on the screen reads back black.  It needs a display, so CTest
 // labels it "display"; run ctest -LE display where there is none.
@@ -75,6 +75,13 @@ static void script(void *) {
     case 5: check("panel in an inset window"); dock->dock_panel(p); break;
     case 6:
       check("panel docked from the inset window");
+      dock->stripes(FL_DOCK_SIDE_ALL);
+      dock->slide_panel(p);
+      dock->toggle_panel(p);
+      break;
+    case 7: check("panel sliding out"); dock->pin_panel(p); break;
+    case 8:
+      check("panel pinned again");
       // Exit here: under CTest on macOS, Fl::run() may not return once the
       // windows are hidden.
       printf("%d failed\n", failed);
