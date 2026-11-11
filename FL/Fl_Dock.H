@@ -122,7 +122,7 @@ private:
   Fl_Widget *node_of(Fl_Widget *ref) const;
   void put(Fl_Widget *node, Fl_Dock_Where where, Fl_Widget *target, double fraction, int share = 0);
   int dock_at(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *target, double fraction, int share);
-  int restore(Fl_Dock_Panel *p, const char *ref, int where, double share);
+  int restore(Fl_Dock_Panel *p, const char *ref, int where, double share, int relative = 0);
   int restore_home(Fl_Dock_Panel *p);
   void take(Fl_Dock_Panel *p);
   void forget(Fl_Dock_Panel *p);
@@ -177,6 +177,7 @@ public:
   int remove_panel(Fl_Dock_Panel *p);
   int show_panel(Fl_Dock_Panel *p);
   int place_panel(Fl_Dock_Panel *p, Fl_Dock_Where where = FL_DOCK_LEFT, Fl_Widget *ref = 0, double fraction = 0.25);
+  int store_panel(Fl_Dock_Panel *p, Fl_Dock_Where where = FL_DOCK_LEFT, Fl_Widget *ref = 0, double fraction = 0.25);
   Fl_Dock_Window *float_panel(Fl_Dock_Panel *p);
   Fl_Dock_Window *float_panel(Fl_Dock_Panel *p, int X, int Y, int W = 0, int H = 0);
   Fl_Dock_Window *inset_panel(Fl_Dock_Panel *p);

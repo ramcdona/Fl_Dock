@@ -339,6 +339,48 @@ TEST(Tree, CloseShowKeepsSizes) {
   return true;
 }
 
+TEST(Tree, StoreChangesNothing) {
+  // Panels given closed leave the dock as it is, and open where they were put.
+  arrange();
+  for (int i = 0; i < 20; i++) {
+    char name[16];
+    snprintf(name, sizeof(name), "s%d", i);
+    EXPECT_EQ(dock->store_panel(make_panel(name), FL_DOCK_RIGHT, view, 0.4), 1);
+  }
+  EXPECT_EQ(strncmp(text(), ARRANGED, strlen(ARRANGED) - strlen("size 800 600\n")), 0);
+  int vw = view->w();
+  Fl_Dock_Panel *s3 = dock->find("s3");
+  EXPECT_TRUE(!s3->docked());
+  dock->show_panel(s3);
+  EXPECT_TRUE(s3->docked());
+  EXPECT_TRUE(s3->x() > view->x());
+  EXPECT_NEAR((double)s3->parent()->w() / vw, 0.4, 0.02);
+  EXPECT_EQ(dock->store_panel(make_panel("bad"), FL_DOCK_LEFT, s3->parent()), 0);
+  return true;
+}
+
+TEST(Tree, ClosedPanelsKeepTheirSize) {
+  // A closed panel is not scaled with the dock, and opens at its own size.
+  arrange();
+  Fl_Dock_Panel *s = make_panel("s");
+  s->size(300, 200);
+  dock->store_panel(s, FL_DOCK_RIGHT, view, 0);
+  dock->close_panel(dock->find("a"));
+  int aw = dock->find("a")->w();
+  int ah = dock->find("a")->h();
+  win->size(300, 250);
+  dock->resize(0, 0, 300, 250);
+  win->size(1600, 1200);
+  dock->resize(0, 0, 1600, 1200);
+  EXPECT_EQ(s->w(), 300);
+  EXPECT_EQ(s->h(), 200);
+  EXPECT_EQ(dock->find("a")->w(), aw);
+  EXPECT_EQ(dock->find("a")->h(), ah);
+  dock->show_panel(s);
+  EXPECT_NEAR(s->w(), 300, 2);
+  return true;
+}
+
 // Resizes the window and its dock, as the user does.
 static void resize_dock(int W, int H) {
   win->size(W, H);
@@ -374,6 +416,103 @@ TEST(Tree, PanelsKeepSizes) {
   resize_dock(1600, 1200);
   EXPECT_NEAR(dock->find("a")->parent()->w(), 0.25 * (1600 - Fl_Dock_Split::bar_size()), 1);
   resize_dock(800, 600);
+  return true;
+}
+
+TEST(Tree, SwappingEditorsKeepsPlaces) {
+  // An application shows one of several editors beside a browser at the
+  // right of the center, showing the new one before hiding the old.  The
+  // browser keeps its width, and each editor opens between the center and
+  // the browser.
+  setup(1);
+  Fl_Dock_Panel *browser = make_panel("browser");
+  dock->add_panel(browser, FL_DOCK_RIGHT, 0, 0.15);
+  Fl_Dock_Panel *ed[2];
+  ed[0] = make_panel("text");
+  ed[1] = make_panel("image");
+  for (int i = 0; i < 2; i++) {
+    ed[i]->size(140 + 60 * i, 100);
+    dock->store_panel(ed[i], FL_DOCK_RIGHT, view, 0);
+  }
+  dock->show_panel(ed[0]);
+  int bw = browser->w();
+  int ew[2];
+  ew[0] = ed[0]->w();
+  ew[1] = 200;
+  EXPECT_NEAR(ew[0], 140, 2);
+  int order[] = { 1, 0, 1, 0, 1 };
+  for (int k = 0; k < 5; k++) {
+    Fl_Dock_Panel *show = ed[order[k]];
+    Fl_Dock_Panel *hide = ed[1 - order[k]];
+    dock->show_panel(show);
+    dock->close_panel(hide);
+    EXPECT_EQ(browser->w(), bw);
+    EXPECT_NEAR(show->w(), ew[order[k]], 2);
+    if (k == 0) ew[1] = show->w();
+    EXPECT_TRUE(show->x() > view->x() + view->w());
+    EXPECT_TRUE(show->x() + show->w() < browser->x());
+    EXPECT_TRUE(normal(dock->root()));
+  }
+  return true;
+}
+
+TEST(Tree, SwappingEditorsHideFirst) {
+  // As above, but the old editor is hidden before the new one is shown.
+  setup(1);
+  Fl_Dock_Panel *browser = make_panel("browser");
+  dock->add_panel(browser, FL_DOCK_RIGHT, 0, 0.15);
+  Fl_Dock_Panel *ed[2];
+  ed[0] = make_panel("text");
+  ed[1] = make_panel("image");
+  for (int i = 0; i < 2; i++) {
+    ed[i]->size(140 + 60 * i, 100);
+    dock->store_panel(ed[i], FL_DOCK_RIGHT, view, 0);
+  }
+  dock->show_panel(ed[0]);
+  int order[] = { 1, 0, 1, 0, 1 };
+  for (int k = 0; k < 5; k++) {
+    Fl_Dock_Panel *show = ed[order[k]];
+    Fl_Dock_Panel *hide = ed[1 - order[k]];
+    dock->close_panel(hide);
+    dock->show_panel(show);
+    if (!(show->x() > view->x() + view->w() && show->x() + show->w() < browser->x())) {
+      fprintf(stderr, "step %d %s at %d, view %d..%d, browser %d\n%s", k, show->name(), show->x(), view->x(),
+              view->x() + view->w(), browser->x(), text());
+    }
+    EXPECT_TRUE(show->x() > view->x() + view->w());
+    EXPECT_TRUE(show->x() + show->w() < browser->x());
+  }
+  return true;
+}
+
+TEST(Tree, SwappingEditorsInIndexOrder) {
+  // The application walks its editors in a fixed order, showing the one
+  // wanted and hiding the rest, so going from the first to the second hides
+  // first, and going back shows first.
+  setup(1);
+  Fl_Dock_Panel *browser = make_panel("browser");
+  dock->add_panel(browser, FL_DOCK_RIGHT, 0, 0.15);
+  Fl_Dock_Panel *ed[2];
+  ed[0] = make_panel("text");
+  ed[1] = make_panel("image");
+  for (int i = 0; i < 2; i++) {
+    ed[i]->size(140 + 60 * i, 100);
+    dock->store_panel(ed[i], FL_DOCK_RIGHT, view, 0);
+  }
+  int wanted[] = { 0, 1, 0, 1, 0, 1 };
+  for (int k = 0; k < 6; k++) {
+    for (int i = 0; i < 2; i++) {
+      if (i == wanted[k]) dock->show_panel(ed[i]);
+      else dock->close_panel(ed[i]);
+    }
+    Fl_Dock_Panel *show = ed[wanted[k]];
+    if (!(show->x() > view->x() + view->w() && show->x() + show->w() < browser->x())) {
+      fprintf(stderr, "step %d %s at %d, view %d..%d, browser %d\n%s", k, show->name(), show->x(), view->x(),
+              view->x() + view->w(), browser->x(), text());
+    }
+    EXPECT_TRUE(show->x() > view->x() + view->w());
+    EXPECT_TRUE(show->x() + show->w() < browser->x());
+  }
   return true;
 }
 
@@ -705,6 +844,22 @@ TEST(Layout, RestoreAtOtherSize) {
   int bar = Fl_Dock_Split::bar_size();
   EXPECT_NEAR(dock->find("a")->parent()->w(), Fl_Dock_Tabs::outer_w(aw) * (800.0 - bar) / (1600 - bar), 2);
   dock->keep_sizes(1);
+  return true;
+}
+
+TEST(Layout, NamesMustBeUnique) {
+  // Panels without a name, or with one the dock has, are refused, so the
+  // dock never writes a layout it cannot read.
+  arrange();
+  Fl_Dock_Panel *dup = make_panel("a");
+  EXPECT_EQ(dock->add_panel(dup, FL_DOCK_RIGHT, view, 0.3), 0);
+  EXPECT_EQ(dock->store_panel(dup), 0);
+  EXPECT_EQ(dock->place_panel(dup), 0);
+  Fl_Dock_Panel *empty = make_panel("");
+  EXPECT_EQ(dock->add_panel(empty), 0);
+  EXPECT_STREQ(text(), ARRANGED);
+  delete dup;
+  delete empty;
   return true;
 }
 

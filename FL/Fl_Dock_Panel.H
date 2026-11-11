@@ -62,6 +62,7 @@ class FL_DOCK_EXPORT Fl_Dock_Panel : public Fl_Group {
   char *home_ref_;
   int home_where_;
   double home_fraction_;
+  int home_relative_;
   char *home_ref2_;     // the neighbour on the other side, used when home_ref_ is gone
   int home_where2_;
   int home_edge_;       // 1 if the panel was at the end of its split, past home_ref()
@@ -72,12 +73,15 @@ class FL_DOCK_EXPORT Fl_Dock_Panel : public Fl_Group {
   void fix_name();
   // Where the panel goes back to: next to the panel named home_ref(), the
   // center if it is "", or the whole dock if 0, on side home_where(), with
-  // home_fraction(), its share of its split.  home_ref2() is the
-  // neighbour on the other side, used if home_ref() is gone.
+  // home_fraction() of the space; home_relative() is 1 if that is a
+  // fraction of home_ref()'s space, as add_panel() takes, 0 if a share of
+  // its split.  home_ref2() is the neighbour on the other side, used if
+  // home_ref() is gone.
   const char *home_ref() const { return home_ref_; }
   int home_where() const { return home_where_; }
   double home_fraction() const { return home_fraction_; }
-  void home(const char *ref, int where, double fraction);
+  int home_relative() const { return home_relative_; }
+  void home(const char *ref, int where, double fraction, int relative = 0);
   const char *home_ref2() const { return home_ref2_; }
   int home_where2() const { return home_where2_; }
   void home2(const char *ref, int where);

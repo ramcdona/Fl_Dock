@@ -622,7 +622,7 @@ int Fl_Dock::dock_at(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *target, d
 // Docks p at a place noted by remember_home() or a layout: beside or as a tab
 // of the panel named ref, beside the center if ref is "", or beside the whole
 // dock if ref is 0, with share its share of the split it rejoins.
-int Fl_Dock::restore(Fl_Dock_Panel *p, const char *ref, int where, double share) {
+int Fl_Dock::restore(Fl_Dock_Panel *p, const char *ref, int where, double share, int relative) {
   Fl_Widget *target = 0;
   if (ref && !ref[0]) {
     target = center_;
@@ -631,6 +631,7 @@ int Fl_Dock::restore(Fl_Dock_Panel *p, const char *ref, int where, double share)
     if (r && r->docked() && r->dock() == this) target = r->parent();
   }
   if (where == FL_DOCK_TAB && !target) where = FL_DOCK_LEFT;
+  if (relative) return dock_at(p, (Fl_Dock_Where)where, target, share, 0);
   return dock_at(p, (Fl_Dock_Where)where, target, share, 1);
 }
 
@@ -645,14 +646,43 @@ int Fl_Dock::restore_home(Fl_Dock_Panel *p) {
     edge = 0;
   }
   Fl_Widget *t = home_target(this, ref);
-  if (edge && t && where != FL_DOCK_TAB) {
+  if (edge && t && !p->home_relative() && where != FL_DOCK_TAB) {
     if (is_panel(t)) t = t->parent();
     Fl_Widget *far = home_target(this, p->home_span());
     if (far && is_panel(far)) far = far->parent();
     t = common_node(this, t, far);
     return dock_at(p, (Fl_Dock_Where)where, edge_node(t, where), p->home_fraction(), 1);
   }
-  return restore(p, ref, where, p->home_fraction());
+  return restore(p, ref, where, p->home_fraction(), p->home_relative());
+}
+
+/**
+  Gives the dock a panel that starts closed: show_panel() docks it as
+  add_panel() would with these arguments, at that time.  Use it for panels
+  that are shown and hidden as the application needs them, so that giving
+  them to the dock changes nothing on the screen.  ref is a panel or the
+  center, and is named, so it may be closed or docked elsewhere by then.
+  \return 1 if the panel was taken, 0 if ref is not this dock's or the
+    panel's name is empty or taken, as for add_panel()
+*/
+int Fl_Dock::store_panel(Fl_Dock_Panel *p, Fl_Dock_Where where, Fl_Widget *ref, double fraction) {
+  Fl_Dock *o = owner();
+  if (!can_take(p)) return 0;
+  p->fix_name();
+  const char *name = 0;
+  if (ref && ref == o->center_) name = "";
+  else if (ref && is_panel(ref) && ((Fl_Dock_Panel *)ref)->dock() && ((Fl_Dock_Panel *)ref)->dock()->owner() == o) name = ((Fl_Dock_Panel *)ref)->name();
+  else if (ref) return 0;
+  Fl_Dock *from = p->dock();
+  if (from && from->owner() != o) {
+    from->owner()->remove_panel(p);
+    from = 0;
+  }
+  if (from && p->docked()) from->take(p);
+  else p->hide();
+  o->store_->add(p);
+  p->home(name, where, fraction, 1);
+  return 1;
 }
 
 // Notes where a docked panel is, so show_panel() or dock_panel() can put it back.

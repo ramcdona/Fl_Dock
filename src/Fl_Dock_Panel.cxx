@@ -32,6 +32,7 @@ Fl_Dock_Panel::Fl_Dock_Panel(int X, int Y, int W, int H, const char *L)
   home_ref_ = 0;
   home_where_ = FL_DOCK_LEFT;
   home_fraction_ = 0.25;
+  home_relative_ = 0;
   home_ref2_ = 0;
   home_where2_ = FL_DOCK_LEFT;
   home_edge_ = 0;
@@ -151,7 +152,8 @@ int Fl_Dock_Panel::docked() const {
   or as a tab of the panel named ref, beside the center if ref is "", or
   beside the whole dock if ref is 0.
 */
-void Fl_Dock_Panel::home(const char *ref, int where, double fraction) {
+void Fl_Dock_Panel::home(const char *ref, int where, double fraction, int relative) {
+  home_relative_ = relative;
   free(home_ref2_);
   home_ref2_ = 0;
   free(home_ref_);
