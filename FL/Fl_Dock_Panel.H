@@ -64,6 +64,8 @@ class FL_DOCK_EXPORT Fl_Dock_Panel : public Fl_Group {
   int home_where2_;
   int home_edge_;       // 1 if the panel was at the end of its split, past home_ref()
   char *home_span_;     // the far end of the part home_ref() is the near end of, for home_edge_
+  int inset_rect_[4];   // the inset window it was last in, relative to the dock; w 0 if none
+  int float_rect_[4];   // the floating window it was last in, on the screen; w 0 if none
 
   void fix_name();
   // Where the panel goes back to: next to the panel named home_ref(), the
@@ -98,6 +100,11 @@ public:
 
   Fl_Dock *dock() const;
   int docked() const;
+
+  void inset_rect(int X, int Y, int W, int H);
+  int get_inset_rect(int &X, int &Y, int &W, int &H) const;
+  void float_rect(int X, int Y, int W, int H);
+  int get_float_rect(int &X, int &Y, int &W, int &H) const;
 
   /**
     Called when the user asks to close the panel; return 0 to refuse.  The

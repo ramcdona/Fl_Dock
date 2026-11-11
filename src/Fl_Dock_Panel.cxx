@@ -36,6 +36,51 @@ Fl_Dock_Panel::Fl_Dock_Panel(int X, int Y, int W, int H, const char *L)
   home_where2_ = FL_DOCK_LEFT;
   home_edge_ = 0;
   home_span_ = 0;
+  for (int i = 0; i < 4; i++) {
+    inset_rect_[i] = 0;
+    float_rect_[i] = 0;
+  }
+}
+
+/**
+  Sets where the panel's inset window goes when the panel is next shown in
+  one: X and Y relative to the dock.  Fl_Dock sets it when the panel leaves
+  an inset window.
+*/
+void Fl_Dock_Panel::inset_rect(int X, int Y, int W, int H) {
+  inset_rect_[0] = X;
+  inset_rect_[1] = Y;
+  inset_rect_[2] = W;
+  inset_rect_[3] = H;
+}
+
+/** Gets where the panel's inset window goes; returns 0 if it has none. */
+int Fl_Dock_Panel::get_inset_rect(int &X, int &Y, int &W, int &H) const {
+  X = inset_rect_[0];
+  Y = inset_rect_[1];
+  W = inset_rect_[2];
+  H = inset_rect_[3];
+  return W > 0;
+}
+
+/**
+  Sets where the panel's floating window goes when the panel is next shown in
+  one, on the screen.  Fl_Dock sets it when the panel leaves a floating window.
+*/
+void Fl_Dock_Panel::float_rect(int X, int Y, int W, int H) {
+  float_rect_[0] = X;
+  float_rect_[1] = Y;
+  float_rect_[2] = W;
+  float_rect_[3] = H;
+}
+
+/** Gets where the panel's floating window goes; returns 0 if it has none. */
+int Fl_Dock_Panel::get_float_rect(int &X, int &Y, int &W, int &H) const {
+  X = float_rect_[0];
+  Y = float_rect_[1];
+  W = float_rect_[2];
+  H = float_rect_[3];
+  return W > 0;
 }
 
 Fl_Dock_Panel::~Fl_Dock_Panel() {

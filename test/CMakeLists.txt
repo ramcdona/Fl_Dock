@@ -15,3 +15,9 @@
 add_executable(unittest_dock unittest_dock.cxx)
 target_link_libraries(unittest_dock PRIVATE fltk::dock)
 add_test(NAME unittest_dock COMMAND unittest_dock)
+
+# OpenGL views drawing wherever the dock puts them; it needs a display.
+add_executable(gl_dock gl_dock.cxx)
+target_link_libraries(gl_dock PRIVATE fltk::dock ${FL_DOCK_FLTK_GL})
+add_test(NAME gl_dock COMMAND gl_dock)
+set_tests_properties(gl_dock PROPERTIES LABELS display TIMEOUT 30)

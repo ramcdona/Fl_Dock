@@ -14,6 +14,7 @@
 #include <FL/Fl_Dock_Panel.H>
 #include <FL/Fl_Dock_Split.H>
 #include <FL/Fl_Dock_Tabs.H>
+#include <FL/Fl_Dock_Window.H>
 #include <FL/Fl.H>
 #include <stdarg.h>
 #include <stdio.h>
@@ -30,13 +31,18 @@
       split v 0.7 0.3
        center
        tabs 1 props log
+    window 120 80 300 400
+     tabs 0 notes
+    inset 40 30 250 200
+     tabs 0 find
     closed help find
     size 800 575
 
   "split h" lays its children side by side and "split v" one above another,
   each with its share; "tabs" gives the index of the tab shown, then the
-  panels' names; "center" is the dock's center.
-  "closed" lists the closed panels.
+  panels' names; "center" is the dock's center.  Each "window" is a floating
+  window at x y w h on the screen, and each "inset" an inset window at x y w h
+  in the dock.  "closed" lists the closed panels.
   "size" is the size of the dock's area, so that panels keep their sizes
   when the layout is restored in a dock of another size.
   Names are encoded so they hold no spaces.  Lines with a
@@ -141,7 +147,7 @@ static void write_node(Layout_Writer &w, Fl_Widget *node, int depth) {
 }
 
 /**
-  Writes the layout of this dock and its closed panels
+  Writes the layout of this dock, its floating windows and its closed panels
   into buf, as text ending in a nul, cutting it short if size is too small.
   \return the length of the whole text, without the nul; if it is size or
     more the text was cut short, and buf needs to be that plus one long
@@ -157,6 +163,13 @@ int Fl_Dock::write_layout(char *buf, int size) const {
   w.put("fl_dock %d\n", LAYOUT_VERSION);
   w.put("dock\n");
   if (o->root_) write_node(w, o->root_, 1);
+  for (int i = 0; i < o->nwindows_; i++) {
+    Fl_Dock_Window *win = o->windows_[i];
+    if (!win->dock()->root() || !writes(win->dock()->root())) continue;
+    if (win->inset()) w.put("inset %d %d %d %d\n", win->x() - o->x(), win->y() - o->y(), win->w(), win->h());
+    else w.put("window %d %d %d %d\n", win->x(), win->y(), win->w(), win->h());
+    write_node(w, win->dock()->root(), 1);
+  }
   int nclosed = o->store_->children();
   if (nclosed > 0) {
     w.put("closed");

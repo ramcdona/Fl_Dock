@@ -14,7 +14,7 @@
 #include <FL/Fl_Dock_Panel.H>
 #include <FL/Fl_Dock_Split.H>
 #include <FL/Fl_Dock_Tabs.H>
-#include <FL/Fl_Window.H>
+#include <FL/Fl_Dock_Window.H>
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
 #include <stdio.h>
@@ -96,6 +96,8 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   root_ = 0;
   center_ = 0;
   owner_ = 0;
+  windows_ = 0;
+  nwindows_ = 0;
   callback_panel_ = 0;
   keep_sizes_ = 1;
   store_ = new Fl_Group(X, Y, W, H);
@@ -105,6 +107,16 @@ Fl_Dock::Fl_Dock(int X, int Y, int W, int H, const char *L)
   store_->resizable(0);
   store_->hide();
   end();
+}
+
+/** Deletes the dock, its panels, open or closed, and its floating windows. */
+Fl_Dock::~Fl_Dock() {
+  while (nwindows_ > 0) {
+    Fl_Dock_Window *w = windows_[nwindows_ - 1];
+    nwindows_--;
+    delete w;
+  }
+  free(windows_);
 }
 
 /** Returns 1 if w is an Fl_Dock_Split. */
@@ -132,9 +144,17 @@ int Fl_Dock::api_version() { return FL_DOCK_API_VERSION; }
 
 /** Resizes the dock and lays out what it holds in the new area; see keep_sizes(). */
 void Fl_Dock::resize(int X, int Y, int W, int H) {
+  int dx = X - x();
+  int dy = Y - y();
   Fl_Widget::resize(X, Y, W, H);
   store_->resize(X, Y, W, H);
+  // Inset windows move with the dock, and are kept inside it.
+  for (int i = 0; i < nwindows_; i++) {
+    Fl_Dock_Window *win = windows_[i];
+    if (win->inset() && (dx || dy)) win->position(win->x() + dx, win->y() + dy);
+  }
   fit_root(1);
+  for (int i = 0; i < nwindows_; i++) windows_[i]->keep_inside();
 }
 
 /** Draws the dock, or only its box and label while it holds nothing. */
@@ -145,6 +165,25 @@ void Fl_Dock::draw() {
     return;
   }
   Fl_Group::draw();
+}
+
+/**
+  Shows and hides the dock's floating windows with the dock, so they appear
+  when the application's window is first shown and go when it is closed.
+*/
+int Fl_Dock::handle(int event) {
+  if ((event == FL_SHOW || event == FL_HIDE) && !owner_) {
+    int r = Fl_Group::handle(event);
+    Fl_Window *top = window();
+    for (int i = 0; i < nwindows_; i++) {
+      Fl_Dock_Window *win = windows_[i];
+      if (win->inset() || !win->dock()->root()) continue;
+      if (event == FL_SHOW && top && top->shown() && visible_r()) show_window(win);
+      else if (event == FL_HIDE) win->hide();
+    }
+    return r;
+  }
+  return Fl_Group::handle(event);
 }
 
 /** Gets the area the dock's tree takes: the whole dock. */
@@ -329,8 +368,15 @@ void Fl_Dock::put(Fl_Widget *node, Fl_Dock_Where where, Fl_Widget *target, doubl
 }
 
 // Removes panel p from its tab group, and the group if that leaves it empty.
-// It is hidden first, while it is still in a window.
+// It is hidden first, while it is still in a window.  A panel leaving a
+// floating or inset window notes where that window was, to open there again.
 void Fl_Dock::take(Fl_Dock_Panel *p) {
+  Fl_Window *own = window();
+  if (owner_ && own && is_tabs(p->parent())) {
+    Fl_Dock_Window *dw = (Fl_Dock_Window *)own;
+    if (dw->inset()) p->inset_rect(dw->x() - owner_->x(), dw->y() - owner_->y(), dw->w(), dw->h());
+    else p->float_rect(dw->x(), dw->y(), dw->w(), dw->h());
+  }
   p->hide();
   Fl_Group *t = p->parent();
   if (is_tabs(t)) {
@@ -341,6 +387,21 @@ void Fl_Dock::take(Fl_Dock_Panel *p) {
   normalize();
   fit_root();
   redraw();
+  // A floating window goes when its last panel leaves.
+  if (owner_ && !root_) {
+    Fl_Window *win = window();
+    for (int i = 0; i < owner_->nwindows_; i++) {
+      if (owner_->windows_[i] == win) {
+        owner_->remove_window((Fl_Dock_Window *)win);
+        win->hide();
+        // An inset window leaves the dock now, so deleting the dock before
+        // the deferred deletion cannot delete it twice.
+        if (win->parent()) win->parent()->remove(win);
+        Fl::delete_widget(win);
+        break;
+      }
+    }
+  }
 }
 
 // Puts the subtree at node in normal form and returns what should take its
@@ -415,7 +476,7 @@ void Fl_Dock::notify(Fl_Dock_Panel *p, Fl_Callback_Reason reason, int step) {
   ref's space, or the panel's own width or height if fraction is 0, or as a
   tab of ref's tab group for FL_DOCK_TAB.  ref is a panel
   docked here, the center, or 0 for the whole dock.  A panel already in the
-  dock is moved; one in another dock is taken out
+  dock, or in one of its windows, is moved; one in another dock is taken out
   of that dock first.  A panel alone in its tab group cannot go beside or
   into its own group.
   \return 1 if the panel was docked; 0 if ref is not in this dock or is the
@@ -553,7 +614,7 @@ void Fl_Dock::remember_home(Fl_Dock_Panel *p) {
   Closes a panel: it is hidden and kept, with where it was, so show_panel() can put
   it back.  The panel's can_close() is not asked; the dock's callback is not
   called.
-  \return 1 if the panel was docked here
+  \return 1 if the panel was docked here or in one of this dock's windows
 */
 int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
   if (!p) return 0;
@@ -567,7 +628,7 @@ int Fl_Dock::close_panel(Fl_Dock_Panel *p) {
 
 /**
   Shows a panel: a closed one goes back where it was, and a docked one has its
-  tab selected.
+  tab selected and its window raised.
   \return 1 if the panel belongs to this dock
 */
 int Fl_Dock::show_panel(Fl_Dock_Panel *p) {
@@ -576,11 +637,202 @@ int Fl_Dock::show_panel(Fl_Dock_Panel *p) {
   if (!d || d->owner() != owner()) return 0;
   if (p->docked()) {
     ((Fl_Dock_Tabs *)p->parent())->value(p);
+    Fl_Window *win = d->window();
+    if (win && d != owner()) win->show();
     return 1;
   }
   Fl_Dock *o = owner();
   o->restore_home(p);
   return 1;
+}
+
+/**
+  Floats a panel in a window of its own: where it floated last, or by the
+  mouse at the panel's size if it has not floated before.  On Wayland the
+  window's place is the compositor's choice.
+  \return the window, or 0 if the panel is not docked here or cannot float
+*/
+Fl_Dock_Window *Fl_Dock::float_panel(Fl_Dock_Panel *p) {
+  return float_at(p, 0, 0, 0, 0, 0);
+}
+
+/**
+  Floats a panel in a window of its own at X, Y on the screen, W by H, or at
+  the panel's size if W or H is 0.  Screens left of or above the main one
+  have negative coordinates, so X and Y may be.  The window is kept on the
+  screens when it is shown.
+  \return the window, or 0 if the panel is not docked here or cannot float
+*/
+Fl_Dock_Window *Fl_Dock::float_panel(Fl_Dock_Panel *p, int X, int Y, int W, int H) {
+  return float_at(p, 1, X, Y, W, H);
+}
+
+// Floats p at X, Y, W, H if given is set, else where it floated last.
+Fl_Dock_Window *Fl_Dock::float_at(Fl_Dock_Panel *p, int given, int X, int Y, int W, int H) {
+  Fl_Dock *o = owner();
+  if (!p || !p->dock() || p->dock()->owner() != o) return 0;
+  if (!p->docked() && p->dock() != o) return 0;
+  if (!given) {
+    if (p->get_float_rect(X, Y, W, H)) {
+      given = 1;
+    } else {
+      W = H = 0;
+    }
+  }
+  if (W <= 0) W = Fl_Dock_Tabs::outer_w(p->w());
+  if (H <= 0) H = Fl_Dock_Tabs::outer_h(p->h());
+  if (W < 100) W = 100;
+  if (H < 80) H = 80;
+  if (!given) {
+    X = Fl::event_x_root() - W / 2;
+    Y = Fl::event_y_root() - 10;
+  }
+  if (p->dock() == o) o->remember_home(p);
+  p->dock()->take(p);
+  Fl_Dock_Window *win = o->new_window(X, Y, W, H, 0);
+  win->copy_label(p->label());
+  win->dock()->add_panel(p, FL_DOCK_LEFT);
+  return win;
+}
+
+/**
+  Floats a panel in an inset window: one inside this dock's window, over the
+  dock, that moves, hides and minimizes with it.  It goes where the panel
+  was last inset, or in the middle of the dock at the panel's size if it has
+  not been inset before.
+  \return the window, or 0 if the panel is not docked here or cannot float
+*/
+Fl_Dock_Window *Fl_Dock::inset_panel(Fl_Dock_Panel *p) {
+  return inset_at(p, 0, 0, 0, 0, 0);
+}
+
+/**
+  Floats a panel in an inset window at X, Y relative to the dock, W by H, or
+  at the panel's size if W or H is 0.  The window is kept inside the dock.
+  \return the window, or 0 if the panel is not docked here or cannot float
+*/
+Fl_Dock_Window *Fl_Dock::inset_panel(Fl_Dock_Panel *p, int X, int Y, int W, int H) {
+  return inset_at(p, 1, X, Y, W, H);
+}
+
+// Insets p at X, Y, W, H if given is set, else where it was inset last.
+Fl_Dock_Window *Fl_Dock::inset_at(Fl_Dock_Panel *p, int given, int X, int Y, int W, int H) {
+  Fl_Dock *o = owner();
+  if (!p || !p->dock() || p->dock()->owner() != o || !o->window()) return 0;
+  if (!p->docked() && p->dock() != o) return 0;
+  if (!given) {
+    if (p->get_inset_rect(X, Y, W, H)) {
+      given = 1;
+    } else {
+      W = H = 0;
+    }
+  }
+  int frame = 2 * Fl_Dock_Window::frame_size();
+  if (W <= 0) W = Fl_Dock_Tabs::outer_w(p->w()) + frame;
+  if (H <= 0) H = Fl_Dock_Tabs::outer_h(p->h()) + frame;
+  if (W < 100) W = 100;
+  if (H < 80) H = 80;
+  if (!given) {
+    X = (o->w() - W) / 2;
+    Y = (o->h() - H) / 2;
+  }
+  if (p->dock() == o) o->remember_home(p);
+  p->dock()->take(p);
+  Fl_Dock_Window *win = o->new_window(o->x() + X, o->y() + Y, W, H, 1);
+  win->copy_label(p->label());
+  win->dock()->add_panel(p, FL_DOCK_LEFT);
+  win->keep_inside();
+  return win;
+}
+
+// Moves and sizes a floating window to lie on the screen nearest its middle,
+// inside that screen's work area, so a window saved on a screen that is
+// gone opens on one that is there.
+static void fit_to_screen(Fl_Window *win) {
+  int cx = win->x() + win->w() / 2;
+  int cy = win->y() + win->h() / 2;
+  int best = 0;
+  double best_d = -1;
+  for (int i = 0; i < Fl::screen_count(); i++) {
+    int sx, sy, sw, sh;
+    Fl::screen_work_area(sx, sy, sw, sh, i);
+    double dx = 0;
+    double dy = 0;
+    if (cx < sx) dx = sx - cx;
+    else if (cx >= sx + sw) dx = cx - (sx + sw - 1);
+    if (cy < sy) dy = sy - cy;
+    else if (cy >= sy + sh) dy = cy - (sy + sh - 1);
+    double d = dx * dx + dy * dy;
+    if (best_d < 0 || d < best_d) {
+      best_d = d;
+      best = i;
+    }
+  }
+  int sx, sy, sw, sh;
+  Fl::screen_work_area(sx, sy, sw, sh, best);
+  int X = win->x();
+  int Y = win->y();
+  int W = win->w();
+  int H = win->h();
+  if (W > sw) W = sw;
+  if (H > sh) H = sh;
+  if (X + W > sx + sw) X = sx + sw - W;
+  if (Y + H > sy + sh) Y = sy + sh - H;
+  if (X < sx) X = sx;
+  if (Y < sy) Y = sy;
+  if (X != win->x() || Y != win->y() || W != win->w() || H != win->h()) win->resize(X, Y, W, H);
+}
+
+// Shows a floating window, on the screens.
+void Fl_Dock::show_window(Fl_Dock_Window *win) {
+  if (!win->shown()) fit_to_screen(win);
+  win->show();
+}
+
+// Makes a window for this dock's panels, floating or inset, and shows it if
+// the dock's window is shown.  An inset window is a subwindow and a child of
+// this dock, which places it itself rather than letting a group resize it.
+Fl_Dock_Window *Fl_Dock::new_window(int X, int Y, int W, int H, int kind) {
+  Fl_Dock_Current keep;
+  Fl_Dock_Window *win = new Fl_Dock_Window(X, Y, W, H, this, (Fl_Dock_Window::Kind)kind);
+  add_window(win);
+  if (kind) Fl_Group::add(win);
+  Fl_Window *top = window();
+  if (top && top->shown()) {
+    if (kind) win->show();
+    else show_window(win);
+  } else if (kind) {
+    win->set_visible();
+  }
+  return win;
+}
+
+/**
+  Docks a floating panel back where it was before it floated.
+  \return 1 if the panel was floating in one of this dock's windows
+*/
+int Fl_Dock::dock_panel(Fl_Dock_Panel *p) {
+  Fl_Dock *o = owner();
+  if (!p || !p->dock() || p->dock() == o || p->dock()->owner() != o) return 0;
+  return o->restore_home(p);
+}
+
+void Fl_Dock::add_window(Fl_Dock_Window *w) {
+  windows_ = (Fl_Dock_Window **)realloc(windows_, sizeof(Fl_Dock_Window *) * (nwindows_ + 1));
+  windows_[nwindows_++] = w;
+}
+
+// The window no longer belongs to this dock, which may go before it does.
+void Fl_Dock::remove_window(Fl_Dock_Window *w) {
+  w->owner_ = 0;
+  w->dock_->owner_ = 0;
+  for (int i = 0; i < nwindows_; i++) {
+    if (windows_[i] == w) {
+      for (int k = i; k < nwindows_ - 1; k++) windows_[k] = windows_[k + 1];
+      nwindows_--;
+      return;
+    }
+  }
 }
 
 // Counts the panels under node, in order, putting the first max in out if it is given.
@@ -606,11 +858,14 @@ static int own_panels(const Fl_Dock *d, Fl_Group *store, Fl_Dock_Panel **out, in
 }
 
 /**
-  Returns the number of panels: docked in this dock, and
+  Returns the number of panels: docked in this dock and its windows, and
   closed.  A floating window's dock counts only its own.
 */
 int Fl_Dock::panels() const {
   int n = own_panels(this, store_, 0, 0);
+  if (!owner_) {
+    for (int i = 0; i < nwindows_; i++) n += windows_[i]->dock()->panels();
+  }
   return n;
 }
 
@@ -618,7 +873,10 @@ int Fl_Dock::panels() const {
 Fl_Dock_Panel **Fl_Dock::all_panels(int &n) const {
   n = panels();
   Fl_Dock_Panel **all = (Fl_Dock_Panel **)malloc(sizeof(Fl_Dock_Panel *) * (n + 1));
-  own_panels(this, store_, all, n);
+  int k = own_panels(this, store_, all, n);
+  if (!owner_) {
+    for (int i = 0; i < nwindows_ && k < n; i++) k += own_panels(windows_[i]->dock(), 0, all + k, n - k);
+  }
   return all;
 }
 
@@ -653,12 +911,13 @@ static Fl_Dock_Panel *find_under(Fl_Widget *node, const char *name) {
   return 0;
 }
 
-/** Returns the panel with this name, docked or closed, or 0. */
+/** Returns the panel with this name, docked, floating or closed, or 0. */
 Fl_Dock_Panel *Fl_Dock::find(const char *name) const {
   if (!name) return 0;
   const Fl_Dock *o = this;
   if (owner_) o = owner_;
   Fl_Dock_Panel *p = find_under(o->root_, name);
   if (!p) p = find_under(o->store_, name);
+  for (int i = 0; !p && i < o->nwindows_; i++) p = find_under(o->windows_[i]->dock()->root(), name);
   return p;
 }

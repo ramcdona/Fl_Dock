@@ -21,6 +21,7 @@
 #include <FL/Fl_Dock_Panel.H>
 #include <FL/Fl_Dock_Split.H>
 #include <FL/Fl_Dock_Tabs.H>
+#include <FL/Fl_Dock_Window.H>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -409,6 +410,163 @@ TEST(Tree, TabRemovalKeepsShown) {
   return true;
 }
 
+// ---- Floating ----------------------------------------------------------------
+
+TEST(Float, FloatAndDock) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Window *w = dock->float_panel(a, 100, 100, 300, 200);
+  EXPECT_TRUE(w != 0);
+  EXPECT_EQ(dock->windows(), 1);
+  EXPECT_TRUE(a->dock() == w->dock());
+  EXPECT_TRUE(dock->find("a") == a);
+  EXPECT_EQ(dock->panels(), 3);
+  EXPECT_TRUE(normal(dock->root()));
+  EXPECT_EQ(dock->dock_panel(a), 1);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(dock->windows(), 0);
+  EXPECT_TRUE(a->dock() == dock);
+  EXPECT_TRUE(strstr(text(), "tabs 0 a\n") != 0);
+  return true;
+}
+
+TEST(Float, CloseFromWindow) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->float_panel(a, 100, 100, 300, 200);
+  EXPECT_EQ(dock->close_panel(a), 1);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(dock->windows(), 0);
+  EXPECT_TRUE(a->dock() == dock);
+  EXPECT_TRUE(!a->docked());
+  EXPECT_TRUE(strstr(text(), "closed a\n") != 0);
+  return true;
+}
+
+TEST(Float, InsetStaysInside) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Window *w = dock->inset_panel(a, 700, 500, 300, 200);
+  EXPECT_TRUE(w != 0);
+  EXPECT_TRUE(w->inset());
+  EXPECT_TRUE(w->parent() == dock);
+  EXPECT_TRUE(a->dock() == w->dock());
+  // Placed past the corner, it is moved back inside the dock.
+  EXPECT_EQ(w->x() + w->w(), 800);
+  EXPECT_EQ(w->y() + w->h(), 600);
+  // A smaller dock moves and shrinks it to fit.
+  dock->resize(0, 0, 250, 150);
+  EXPECT_EQ(w->x(), 0);
+  EXPECT_EQ(w->w(), 250);
+  EXPECT_EQ(w->h(), 150);
+  dock->resize(0, 0, 800, 600);
+  // Docking it again removes the window.
+  EXPECT_EQ(dock->dock_panel(a), 1);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(dock->windows(), 0);
+  EXPECT_TRUE(strstr(text(), "tabs 0 a\n") != 0);
+  return true;
+}
+
+TEST(Float, InsetTitleIsTabStrip) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  int pw = a->w();
+  int ph = a->h();
+  Fl_Dock_Window *w = dock->inset_panel(a);
+  EXPECT_TRUE(w != 0);
+  // No title bar: the tab strip is at the top, inside the frame.
+  int f = Fl_Dock_Window::frame_size();
+  Fl_Dock_Tabs *t = (Fl_Dock_Tabs *)a->parent();
+  EXPECT_EQ(t->y(), f);
+  EXPECT_EQ(w->h(), Fl_Dock_Tabs::outer_h(ph) + 2 * f);
+  // Opened at the panel's own size.
+  EXPECT_EQ(a->w(), pw);
+  EXPECT_EQ(a->h(), ph);
+  // The strip beside the tab moves the window.
+  int y = t->y() + Fl_Dock_Tabs::tab_height() / 2;
+  int wx = w->x();
+  mouse(w, FL_PUSH, t->x() + t->w() - 30, y);
+  mouse(w, FL_DRAG, t->x() + t->w() - 40, y);
+  mouse(w, FL_RELEASE, t->x() + t->w() - 40, y);
+  EXPECT_EQ(w->x(), wx - 10);
+  EXPECT_EQ(dock->dock_panel(a), 1);
+  Fl::do_widget_deletion();
+  return true;
+}
+
+// Sends a press at X, Y in w, a drag by DX, DY and a release, with the
+// mouse given in w's coordinates as it is while w moves under it.
+static void drag_window(Fl_Window *w, int X, int Y, int DX, int DY) {
+  int px = w->x() + X;
+  int py = w->y() + Y;
+  mouse(w, FL_PUSH, X, Y);
+  mouse(w, FL_DRAG, px + DX - w->x(), py + DY - w->y());
+  mouse(w, FL_RELEASE, px + DX - w->x(), py + DY - w->y());
+}
+
+TEST(Float, InsetSizesFromEveryEdge) {
+  arrange();
+  Fl_Dock_Window *w = dock->inset_panel(dock->find("a"), 200, 150, 300, 200);
+  int f = Fl_Dock_Window::frame_size();
+  // The left edge, the opposite edge staying put.
+  drag_window(w, 1, w->h() / 2, -20, 0);
+  EXPECT_EQ(w->x(), 180);
+  EXPECT_EQ(w->w(), 320);
+  EXPECT_EQ(w->y(), 150);
+  // The top edge.
+  drag_window(w, w->w() / 2, 1, 0, -30);
+  EXPECT_EQ(w->y(), 120);
+  EXPECT_EQ(w->h(), 230);
+  EXPECT_EQ(w->x(), 180);
+  // Near the top-left corner, both.
+  drag_window(w, 1, f + 2, -10, -10);
+  EXPECT_EQ(w->x(), 170);
+  EXPECT_EQ(w->y(), 110);
+  EXPECT_EQ(w->w(), 330);
+  EXPECT_EQ(w->h(), 240);
+  // Near the bottom-left corner, the left and the bottom.
+  drag_window(w, 1, w->h() - 2, -10, 10);
+  EXPECT_EQ(w->x(), 160);
+  EXPECT_EQ(w->w(), 340);
+  EXPECT_EQ(w->h(), 250);
+  EXPECT_EQ(w->y(), 110);
+  // The left edge stops at the dock's area, the right edge staying put.
+  int right = w->x() + w->w();
+  drag_window(w, 1, w->h() / 2, -1000, 0);
+  EXPECT_EQ(w->x(), dock->x());
+  EXPECT_EQ(w->x() + w->w(), right);
+  dock->dock_panel(dock->find("a"));
+  Fl::do_widget_deletion();
+  return true;
+}
+
+
+TEST(Float, InsetFromFloating) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->float_panel(a, 100, 100, 300, 200);
+  Fl_Dock_Window *w = dock->inset_panel(a, 10, 10, 200, 150);
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(w != 0);
+  EXPECT_EQ(dock->windows(), 1);
+  EXPECT_TRUE(dock->window_at(0)->inset());
+  return true;
+}
+
+TEST(Float, DockGoesFirst) {
+  // A window waiting to be deleted outlives the dock it belonged to.
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->inset_panel(a, 10, 10, 200, 150);
+  dock->dock_panel(a);
+  delete win;
+  win = 0;
+  Fl::do_widget_deletion();
+  setup(1);
+  return true;
+}
+
 // ---- Layout ------------------------------------------------------------------
 
 TEST(Layout, ShortBuffer) {
@@ -459,6 +617,35 @@ TEST(Callback, BarDrag) {
   mouse(s, FL_RELEASE, bx - 40, 300);
   EXPECT_EQ(calls, 2);
   dock->when(FL_WHEN_RELEASE);
+  dock->callback((Fl_Callback *)0);
+  return true;
+}
+
+TEST(Callback, InsetMoveAndSize) {
+  arrange();
+  dock->callback(count_cb);
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Window *w = dock->inset_panel(a, 100, 100, 300, 200);
+  calls = 0;
+  // The corner grip sizes it.
+  int ww = w->w();
+  mouse(w, FL_PUSH, w->w() - 4, w->h() - 4);
+  mouse(w, FL_DRAG, w->w() - 4 + 30, w->h() - 4);
+  mouse(w, FL_RELEASE, w->w() - 4, w->h() - 4);
+  EXPECT_EQ(w->w(), ww + 30);
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(last_reason, FL_REASON_CHANGED);
+  EXPECT_TRUE(last_panel == a);
+  // The strip beside the tab moves it.
+  Fl_Dock_Tabs *t = (Fl_Dock_Tabs *)a->parent();
+  int wx = w->x();
+  int y = t->y() + Fl_Dock_Tabs::tab_height() / 2;
+  mouse(w, FL_PUSH, t->x() + t->w() - 30, y);
+  mouse(w, FL_DRAG, t->x() + t->w() - 30 - 25, y);
+  mouse(w, FL_RELEASE, t->x() + t->w() - 30 - 25, y);
+  EXPECT_EQ(w->x(), wx - 25);
+  EXPECT_EQ(calls, 2);
+  EXPECT_EQ(last_reason, FL_REASON_DRAGGED);
   dock->callback((Fl_Callback *)0);
   return true;
 }

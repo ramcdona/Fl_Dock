@@ -19,6 +19,7 @@
 class Fl_Dock_Panel;
 class Fl_Dock_Tabs;
 class Fl_Dock_Split;
+class Fl_Dock_Window;
 
 /** The version of Fl_Dock: 10000 * major + 100 * minor + patch. */
 #define FL_DOCK_VERSION 100
@@ -50,6 +51,9 @@ enum Fl_Dock_Where {
   in a normal form: no empty tab groups, no split with one child, and no split
   inside a split of the same direction.
 
+  A dock and the windows its panels float in share their panels: find() and
+  write_layout() cover them all.
+
   \code
   Fl_Dock *dock = new Fl_Dock(0, 25, 800, 575);
   dock->center(view);
@@ -64,12 +68,15 @@ enum Fl_Dock_Where {
   Fl::callback_reason() set and callback_panel() returning the panel, if
   when() has FL_WHEN_CHANGED or FL_WHEN_RELEASE, the default.  The reasons:
 
-  - FL_REASON_CLOSED: the user closed a panel, from its tab.
+  - FL_REASON_DRAGGED: the user moved a panel:
+    floated, inset or docked it from a menu, or moved its inset window.
+  - FL_REASON_CLOSED: the user closed a panel, from its tab or its window.
   - FL_REASON_SELECTED: the user selected a panel's tab.
-  - FL_REASON_CHANGED: the user dragged a bar between two parts of the dock,
-    for which callback_panel() is 0.
+  - FL_REASON_CHANGED: the user resized something: dragged a bar between two
+    parts of the dock, for which callback_panel() is 0, or resized an inset
+    window.
 
-  Dragging a bar calls the callback as it moves
+  Dragging a bar or resizing an inset window calls the callback as it moves
   with FL_WHEN_CHANGED and when it is let go with FL_WHEN_RELEASE.  An
   application that saves its layout when it changes can save on every call.
 */
@@ -86,6 +93,8 @@ private:
   Fl_Widget *center_;           // the center widget, or 0
   Fl_Group *store_;             // hidden: closed panels
   Fl_Dock *owner_;              // the dock this one's window was floated from, or 0
+  Fl_Dock_Window **windows_;    // floating windows, for the owning dock
+  int nwindows_;
   Fl_Dock_Panel *callback_panel_;
   int keep_sizes_;              // 1 if panels keep their sizes as the dock is resized
 
@@ -103,15 +112,24 @@ private:
   void fit_root(int keep = 0);
   void remember_home(Fl_Dock_Panel *p);
   void notify(Fl_Dock_Panel *p, Fl_Callback_Reason reason, int step = 0);
+  void add_window(Fl_Dock_Window *w);
+  void remove_window(Fl_Dock_Window *w);
+  Fl_Dock_Window *new_window(int X, int Y, int W, int H, int kind);
+  void show_window(Fl_Dock_Window *win);
+  Fl_Dock_Window *float_at(Fl_Dock_Panel *p, int given, int X, int Y, int W, int H);
+  Fl_Dock_Window *inset_at(Fl_Dock_Panel *p, int given, int X, int Y, int W, int H);
 
   friend class Fl_Dock_Tabs;
+  friend class Fl_Dock_Window;
   friend class Fl_Dock_Split;
 
 public:
   Fl_Dock(int X, int Y, int W, int H, const char *L = 0);
+  ~Fl_Dock() FL_OVERRIDE;
 
   void resize(int X, int Y, int W, int H) FL_OVERRIDE;
   void draw() FL_OVERRIDE;
+  int handle(int event) FL_OVERRIDE;
 
   /** Returns the root node of the tree, or 0 if the dock is empty. */
   Fl_Widget *root() const { return root_; }
@@ -123,6 +141,11 @@ public:
   int add_panel(Fl_Dock_Panel *p, Fl_Dock_Where where = FL_DOCK_LEFT, Fl_Widget *ref = 0, double fraction = 0.25);
   int close_panel(Fl_Dock_Panel *p);
   int show_panel(Fl_Dock_Panel *p);
+  Fl_Dock_Window *float_panel(Fl_Dock_Panel *p);
+  Fl_Dock_Window *float_panel(Fl_Dock_Panel *p, int X, int Y, int W = 0, int H = 0);
+  Fl_Dock_Window *inset_panel(Fl_Dock_Panel *p);
+  Fl_Dock_Window *inset_panel(Fl_Dock_Panel *p, int X, int Y, int W = 0, int H = 0);
+  int dock_panel(Fl_Dock_Panel *p);
 
   Fl_Dock_Panel *find(const char *name) const;
   int panels() const;
@@ -132,6 +155,13 @@ public:
   Fl_Dock *owner() { if (owner_) return owner_; return this; }
   /** Returns the dock this one belongs to. */
   const Fl_Dock *owner() const { if (owner_) return owner_; return this; }
+  /** Returns the number of floating windows. */
+  int windows() const { return nwindows_; }
+  /** Returns floating window i, or 0. */
+  Fl_Dock_Window *window_at(int i) const {
+    if (i < 0 || i >= nwindows_) return 0;
+    return windows_[i];
+  }
 
   int write_layout(char *buf, int size) const;
 

@@ -26,9 +26,10 @@ class Fl_Dock_Panel;
   them shown.
 
   The tab strip along the top has a tab for each panel, and a button at the
-  right of the strip opens a menu to select a panel or close the shown one.
-  A thin line goes around the group, see border().  Fl_Dock creates and
-  removes tab groups as panels move.
+  right of the strip opens a menu to float, dock or close the shown panel.
+  A thin line goes around the group, see border().  In an inset window the
+  strips are the title bar: the part beside the tabs moves the window.
+  Fl_Dock creates and removes tab groups as panels move.
 */
 class FL_DOCK_EXPORT Fl_Dock_Tabs : public Fl_Group {
   int value_;           // index of the shown panel
@@ -40,7 +41,9 @@ class FL_DOCK_EXPORT Fl_Dock_Tabs : public Fl_Group {
   void show_menu();
   void insert_panel(Fl_Dock_Panel *p, int index);
   void remove_panel(Fl_Dock_Panel *p);
+  int on_strip_space(int X, int Y) const;
   friend class Fl_Dock;
+  friend class Fl_Dock_Window;
 
 public:
   Fl_Dock_Tabs(int X, int Y, int W, int H);

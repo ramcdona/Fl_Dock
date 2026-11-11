@@ -13,6 +13,7 @@
 #include <FL/Fl_Dock_Tabs.H>
 #include <FL/Fl_Dock_Panel.H>
 #include <FL/Fl_Dock.H>
+#include <FL/Fl_Dock_Window.H>
 #include <FL/Fl.H>
 #include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
@@ -25,6 +26,7 @@ static int border_size = 1;
 static const int TAB_PAD = 10;          // space either side of a tab's title
 static const int TAB_MIN_W = 36;
 static const int MENU_W = 20;           // the menu button at the right
+static const int GRAB_W = 40;           // strip kept free of tabs to move an inset window by
 
 /** Creates an empty tab group. */
 Fl_Dock_Tabs::Fl_Dock_Tabs(int X, int Y, int W, int H)
@@ -52,6 +54,20 @@ int Fl_Dock_Tabs::outer_w(int W) { return W + 2 * border_size; }
 
 /** Returns the height of a tab group whose panels are H high. */
 int Fl_Dock_Tabs::outer_h(int H) { return H + tabs_height + border_size; }
+
+// The window of the dock this group is in, if it is an inset one, or 0.
+// Its tab strips are its title bar.
+static Fl_Dock_Window *inset_window_of(const Fl_Widget *w) {
+  for (Fl_Widget *p = w->parent(); p; p = p->parent()) {
+    if (Fl_Dock::is_split(p) || Fl_Dock::is_tabs(p)) continue;
+    Fl_Dock *d = (Fl_Dock *)p;
+    if (d->owner() == d || !d->window()) return 0;
+    Fl_Dock_Window *win = (Fl_Dock_Window *)d->window();
+    if (win->inset()) return win;
+    return 0;
+  }
+  return 0;
+}
 
 /** Returns panel i, or 0. */
 Fl_Dock_Panel *Fl_Dock_Tabs::panel(int i) const {
@@ -137,6 +153,7 @@ int *Fl_Dock_Tabs::tab_widths() const {
   int *ws = (int *)malloc(sizeof(int) * (n + 1));
   fl_font(FL_HELVETICA, FL_NORMAL_SIZE);
   int room = w() - MENU_W;
+  if (inset_window_of(this)) room -= GRAB_W;
   int total = 0;
   for (int k = 0; k < n; k++) {
     Fl_Widget *c = child(k);
@@ -171,6 +188,11 @@ int Fl_Dock_Tabs::on_menu_box(int X, int Y) const {
   return X >= x() + w() - MENU_W && X < x() + w() && Y >= y() && Y < y() + tabs_height;
 }
 
+/** \internal Returns 1 if X, Y is on the tab strip, beside the tabs and the menu button. */
+int Fl_Dock_Tabs::on_strip_space(int X, int Y) const {
+  return tab_at(X, Y) == -1 && !on_menu_box(X, Y);
+}
+
 // The menu at the right of the strip: the panels, to show one whose tab is
 // too narrow to read, then what can be done with the one shown.
 void Fl_Dock_Tabs::show_menu() {
@@ -182,7 +204,7 @@ void Fl_Dock_Tabs::show_menu() {
     break;
   }
   if (!p || !d) return;
-  enum { CLOSE = 1000 };
+  enum { FLOAT = 1000, INSET, DOCK, CLOSE };
   int n = children();
   Fl_Menu_Item *items = (Fl_Menu_Item *)calloc(n + 8, sizeof(Fl_Menu_Item));
   int k = 0;
@@ -192,6 +214,29 @@ void Fl_Dock_Tabs::show_menu() {
     items[k].flags = FL_MENU_RADIO;
     if (i == value_) items[k].flags |= FL_MENU_VALUE;
     if (i == n - 1) items[k].flags |= FL_MENU_DIVIDER;
+    k++;
+  }
+  // Docked, floating in a window of its own, or floating inside the dock's
+  // window: offer the other two.
+  int floating = (d->owner() != d);
+  int inset = 0;
+  if (floating && d->window()) {
+    inset = ((Fl_Dock_Window *)d->window())->inset();
+  }
+  int floatable = (p->dock_flags() & FL_DOCK_FLOATABLE);
+  if (floatable && (!floating || inset)) {
+    items[k].label("Float");
+    items[k].argument(FLOAT);
+    k++;
+  }
+  if (floatable && !inset && d->owner()->window()) {
+    items[k].label("Float Inside");
+    items[k].argument(INSET);
+    k++;
+  }
+  if (floating) {
+    items[k].label("Dock");
+    items[k].argument(DOCK);
     k++;
   }
   if (p->dock_flags() & FL_DOCK_CLOSABLE) {
@@ -208,6 +253,12 @@ void Fl_Dock_Tabs::show_menu() {
   if (a < n) {
     value(panel((int)a));
     owner->notify(panel((int)a), FL_REASON_SELECTED);
+  } else if (a == FLOAT) {
+    if (owner->float_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
+  } else if (a == INSET) {
+    if (owner->inset_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
+  } else if (a == DOCK) {
+    if (owner->dock_panel(p)) owner->notify(p, FL_REASON_DRAGGED);
   } else if (a == CLOSE) {
     if (p->can_close() && owner->close_panel(p)) owner->notify(p, FL_REASON_CLOSED);
   }
