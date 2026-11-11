@@ -1062,6 +1062,155 @@ TEST(Layout, DeepTrees) {
   return true;
 }
 
+// A small deterministic random number generator, so runs are repeatable.
+static unsigned rnd_state = 1;
+static int rnd(int n) {
+  rnd_state = rnd_state * 1103515245u + 12345u;
+  return (int)((rnd_state >> 16) % (unsigned)n);
+}
+
+TEST(Layout, EveryStateReadsBack) {
+  // After each of many operations, chosen at random from a fixed seed, the
+  // tree is in normal form and the layout written reads back the same.
+  arrange_stripes();
+  rnd_state = 12345;
+  // Another seed may be given to look further.
+  if (getenv("UNITTEST_SEED")) rnd_state = (unsigned)atoi(getenv("UNITTEST_SEED"));
+  int made = 0;
+  for (int step = 0; step < 600; step++) {
+    int np = dock->panels();
+    Fl_Dock_Panel *p = 0;
+    Fl_Dock_Panel *q = 0;
+    if (np > 0) {
+      p = dock->panel(rnd(np));
+      q = dock->panel(rnd(np));
+    }
+    int op = rnd(18);
+    if (!p) op = 0;
+    char name[16];
+    switch (op) {
+      case 0:
+        snprintf(name, sizeof(name), "n%d", made++);
+        if (!dock->add_panel(make_panel(name), (Fl_Dock_Where)rnd(5), q, 0.3)) delete dock->find(name);
+        break;
+      case 1: dock->close_panel(p); break;
+      case 2: dock->show_panel(p); break;
+      case 3: dock->float_panel(p, rnd(500), rnd(500), 100 + rnd(200), 100 + rnd(200)); break;
+      case 4: dock->inset_panel(p, rnd(500), rnd(400), 100 + rnd(200), 100 + rnd(200)); break;
+      case 5: dock->dock_panel(p); break;
+      case 6: {
+        snprintf(name, sizeof(name), "s%d", made++);
+        Fl_Dock_Panel *s = make_panel(name);
+        if (!dock->store_panel(s, (Fl_Dock_Where)rnd(4), q, 0.3)) delete s;
+        break;
+      }
+      case 7: dock->slide_panel(p); break;
+      case 8: dock->pin_panel(p); break;
+      case 9: dock->toggle_panel(p); break;
+      case 10: dock->stripe_panel(p, (Fl_Dock_Where)rnd(4), rnd(2)); break;
+      case 11: dock->unstripe_panel(p); break;
+      case 12: dock->add_panel(p, (Fl_Dock_Where)rnd(5), q, 0.4); break;
+      case 13:
+        dock->remove_panel(p);
+        delete p;
+        break;
+      case 14: delete p; break;
+      case 15:
+        if (rnd(2)) dock->maximize_panel(p);
+        else dock->hide_all();
+        break;
+      case 16: {
+        Fl_Dock_Panel *d = make_panel(p->name());
+        if (dock->add_panel(d) || dock->store_panel(d)) {
+          fprintf(stderr, "step %d: a second %s was taken\n", step, p->name());
+          return false;
+        }
+        delete d;
+        break;
+      }
+      case 17:
+        if (dock->center()) dock->center(0);
+        else dock->center(view);
+        break;
+    }
+    Fl::do_widget_deletion();
+    if (dock->root() && !normal(dock->root())) {
+      fprintf(stderr, "step %d, operation %d: not in normal form\n", step, op);
+      return false;
+    }
+    if (!rereads()) {
+      fprintf(stderr, "step %d, operation %d\n", step, op);
+      return false;
+    }
+  }
+  if (!view->parent()) dock->center(view);
+  return true;
+}
+
+// The characters and words a layout is made of, to make broken ones from.
+static const char *fuzz_words[] = {
+  "fl_dock", "dock", "split", "h", "v", "tabs", "center", "window", "inset", "closed", "opens",
+  "stripe", "left", "right", "top", "bottom", "sliding", "size", "|", "a", "b", "c", "0", "1", "2",
+  "-1", "0.5", "1e300", "nan", "1000000", "%", "%4", "%zz", "\n", " ", "  ", "\r", 0
+};
+
+TEST(Layout, Fuzz) {
+  // Layouts broken at random, from a fixed seed, are refused or read; one
+  // that is read leaves the dock writing a layout it reads back.
+  rnd_state = 777;
+  if (getenv("UNITTEST_SEED")) rnd_state = (unsigned)atoi(getenv("UNITTEST_SEED"));
+  for (int base = 0; base < 4; base++) {
+    arrange_stripes();
+    if (base == 1) dock->float_panel(dock->find("a"), 100, 100, 300, 200);
+    if (base == 2) {
+      dock->inset_panel(dock->find("c"), 40, 30, 250, 200);
+      dock->close_panel(dock->find("b"));
+    }
+    if (base == 3) dock->slide_panel(dock->find("b"));
+    Fl::do_widget_deletion();
+    char *good = written();
+    int n = (int)strlen(good);
+    for (int k = 0; k < 500; k++) {
+      char *t = (char *)malloc(n * 2 + 64);
+      strcpy(t, good);
+      int m = 1 + rnd(3);
+      for (int j = 0; j < m; j++) {
+        int len = (int)strlen(t);
+        int at = rnd(len + 1);
+        int kind = rnd(4);
+        if (kind == 0 && len > 0) {
+          t[rnd(len)] = (char)(32 + rnd(95));
+        } else if (kind == 1 && len > 0) {
+          int cut = rnd(len - at + 1);
+          memmove(t + at, t + at + cut, len - at - cut + 1);
+        } else if (kind == 2) {
+          const char *w = fuzz_words[rnd(37)];
+          int wl = (int)strlen(w);
+          if (len + wl < n * 2 + 60) {
+            memmove(t + at + wl, t + at, len - at + 1);
+            memcpy(t + at, w, wl);
+          }
+        } else {
+          t[at] = 0;
+        }
+      }
+      int r = dock->read_layout(t);
+      Fl::do_widget_deletion();
+      if (r != 0 && r != -1) {
+        fprintf(stderr, "layout returned %d for\n%s\n", r, t);
+        return false;
+      }
+      if (r == 0 && (!rereads() || (dock->root() && !normal(dock->root())))) {
+        fprintf(stderr, "after reading\n%s\n", t);
+        return false;
+      }
+      free(t);
+    }
+    free(good);
+  }
+  return true;
+}
+
 TEST(Layout, NameAndLabel) {
   // A panel's name is its label unless set, and stays when the label
   // changes once the dock has it.
