@@ -10,6 +10,10 @@
 #     https://www.fltk.org/COPYING.php
 #
 
+# The demo: a GL view in the center and panels around it.
+add_executable(dock WIN32 MACOSX_BUNDLE dock.cxx)
+target_link_libraries(dock PRIVATE fltk::dock ${FL_DOCK_FLTK_GL})
+
 # Unit tests of the tree, the drop targets and layouts.  They show no window,
 # but on X11 and Wayland measuring text needs a display.
 add_executable(unittest_dock unittest_dock.cxx)
