@@ -68,7 +68,7 @@ enum Fl_Dock_Where {
   Fl::callback_reason() set and callback_panel() returning the panel, if
   when() has FL_WHEN_CHANGED or FL_WHEN_RELEASE, the default.  The reasons:
 
-  - FL_REASON_DRAGGED: the user moved a panel:
+  - FL_REASON_DRAGGED: the user moved a panel: dropped it after a drag,
     floated, inset or docked it from a menu, or moved its inset window.
   - FL_REASON_CLOSED: the user closed a panel, from its tab or its window.
   - FL_REASON_SELECTED: the user selected a panel's tab.
@@ -137,6 +137,7 @@ private:
 
   friend class Fl_Dock_Tabs;
   friend class Fl_Dock_Window;
+  friend class Fl_Dock_Drag;
   friend class Fl_Dock_Split;
 
 public:

@@ -22,6 +22,7 @@
 #include <FL/Fl_Dock_Split.H>
 #include <FL/Fl_Dock_Tabs.H>
 #include <FL/Fl_Dock_Window.H>
+#include "../src/Fl_Dock_Drag.H"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -925,6 +926,108 @@ TEST(Layout, KeptPlaces) {
   // other is below everything.
   Fl_Dock_Panel *o = dock->find("other");
   EXPECT_EQ(o->parent()->y() + o->parent()->h(), 600);
+  return true;
+}
+
+// ---- Drop targets ------------------------------------------------------------
+
+TEST(Drop, Targets) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Panel *b = dock->find("b");
+  Fl_Dock_Tabs *ta = (Fl_Dock_Tabs *)a->parent();
+  Fl_Dock_Tabs *tb = (Fl_Dock_Tabs *)b->parent();
+  Fl_Dock_Target t;
+  // The band along the dock's edge docks beside everything.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, 790, 300, tb, b, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_RIGHT);
+  EXPECT_TRUE(t.node == 0);
+  // The middle of the center goes beside it, by the nearest side.
+  int cx = view->x() + view->w() / 2;
+  int cy = view->y() + view->h() / 2;
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, cx, view->y() + 40, tb, b, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_TOP);
+  EXPECT_TRUE(t.node == view);
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, view->x() + 40, cy, tb, b, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_LEFT);
+  // The middle of a tab group, or its tab strip, makes a tab.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, ta->x() + ta->w() / 2, ta->y() + ta->h() / 2, tb, b, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_TAB);
+  EXPECT_TRUE(t.node == ta);
+  // A tab strip along the dock's edge is still a tab strip.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, ta->x() + 5, ta->y() + 5, tb, b, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_TAB);
+  EXPECT_EQ(t.index, 0);
+  // Below it, the band along the dock's edge.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, ta->x() + 5, ta->y() + 60, tb, b, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_LEFT);
+  EXPECT_TRUE(t.node == 0);
+  // A lone panel dropped on its own group changes nothing.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, ta->x() + ta->w() / 2, ta->y() + ta->h() / 2, ta, a, t), 0);
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, ta->x() + 30, ta->y() + ta->h() / 2, ta, a, t), 0);
+  // One of two panels can go beside its own group.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, tb->x() + 30, tb->y() + tb->h() / 2, tb, b, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_LEFT);
+  // Outside the dock is no target.
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, 900, 300, tb, b, t), 0);
+  return true;
+}
+
+TEST(Drop, LargeGroup) {
+  // A group of many tabs, dragged whole, moves whole.
+  arrange();
+  Fl_Dock_Panel *b = dock->find("b");
+  for (int i = 0; i < 300; i++) {
+    char name[16];
+    snprintf(name, sizeof(name), "t%d", i);
+    dock->add_panel(make_panel(name), FL_DOCK_TAB, b);
+  }
+  Fl_Dock_Tabs *t = (Fl_Dock_Tabs *)b->parent();
+  EXPECT_EQ(t->panels(), 302);
+  Fl_Dock_Target tg;
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, 790, 300, t, 0, tg), 1);
+  EXPECT_EQ(Fl_Dock_Drag::drop(t, 0, tg), 1);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(((Fl_Dock_Tabs *)b->parent())->panels(), 302);
+  EXPECT_TRUE(dock->find("t299")->parent() == b->parent());
+  EXPECT_TRUE(normal(dock->root()));
+  return true;
+}
+
+TEST(Drop, DropGroupBesideCenter) {
+  arrange();
+  Fl_Dock_Panel *b = dock->find("b");
+  Fl_Dock_Tabs *tb = (Fl_Dock_Tabs *)b->parent();
+  Fl_Dock_Target t;
+  EXPECT_EQ(Fl_Dock_Drag::hit(dock, view->x() + view->w() - 30, view->y() + view->h() / 2, tb, 0, t), 1);
+  EXPECT_EQ(t.where, FL_DOCK_RIGHT);
+  // Dropping the whole group keeps b and c together.
+  EXPECT_EQ(Fl_Dock_Drag::drop(tb, 0, t), 1);
+  EXPECT_TRUE(normal(dock->root()));
+  EXPECT_TRUE(dock->find("b")->parent() == dock->find("c")->parent());
+  EXPECT_TRUE(b->x() > view->x());
+  return true;
+}
+
+TEST(Drop, SourceDeletedDuringDrag) {
+  // A drag whose tab group goes away, as a shortcut closing the dragged
+  // panel does, ends.
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Tabs *ta = (Fl_Dock_Tabs *)a->parent();
+  Fl_Dock_Drag::begin(ta, a);
+  EXPECT_EQ(Fl_Dock_Drag::active(), 1);
+  dock->close_panel(a);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(Fl_Dock_Drag::active(), 0);
+  Fl_Dock_Drag::cancel();
+  // A drag of a group whose tab group is deleted while another of its
+  // panels stays.
+  arrange();
+  Fl_Dock_Tabs *tb = (Fl_Dock_Tabs *)dock->find("b")->parent();
+  Fl_Dock_Drag::begin(tb, 0);
+  dock->close_panel(dock->find("c"));
+  EXPECT_EQ(Fl_Dock_Drag::active(), 0);
   return true;
 }
 

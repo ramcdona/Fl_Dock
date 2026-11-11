@@ -21,3 +21,10 @@ add_executable(gl_dock gl_dock.cxx)
 target_link_libraries(gl_dock PRIVATE fltk::dock ${FL_DOCK_FLTK_GL})
 add_test(NAME gl_dock COMMAND gl_dock)
 set_tests_properties(gl_dock PROPERTIES LABELS display TIMEOUT 30)
+
+# A dock's windows as the application's window is shown and closed; it needs
+# a display.
+add_executable(window_dock window_dock.cxx)
+target_link_libraries(window_dock PRIVATE fltk::dock)
+add_test(NAME window_dock COMMAND window_dock)
+set_tests_properties(window_dock PROPERTIES LABELS display TIMEOUT 30)

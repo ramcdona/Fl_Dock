@@ -17,6 +17,7 @@
 #include <FL/Fl.H>
 #include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
+#include "Fl_Dock_Drag.H"
 #include <stdlib.h>
 
 static int tabs_height = 24;
@@ -25,7 +26,9 @@ static int border_size = 1;
 // Sizes within the tab strip.
 static const int TAB_PAD = 10;          // space either side of a tab's title
 static const int TAB_MIN_W = 36;
+static const int CLOSE_W = 14;          // the close button
 static const int MENU_W = 20;           // the menu button at the right
+static const int DRAG_START = 5;        // how far a press moves before it is a drag
 static const int GRAB_W = 40;           // strip kept free of tabs to move an inset window by
 
 /** Creates an empty tab group. */
@@ -34,7 +37,14 @@ Fl_Dock_Tabs::Fl_Dock_Tabs(int X, int Y, int W, int H)
   type(FL_DOCK_TABS);
   box(FL_FLAT_BOX);
   value_ = 0;
+  pressed_ = -2;
+  press_x_ = press_y_ = 0;
+  close_pressed_ = -1;
   end();
+}
+
+Fl_Dock_Tabs::~Fl_Dock_Tabs() {
+  Fl_Dock_Drag::source_gone(this);
 }
 
 /** Returns the height of the tab strip. */
@@ -160,6 +170,7 @@ int *Fl_Dock_Tabs::tab_widths() const {
     int ww = 0;
     if (c->label()) ww = (int)fl_width(c->label());
     ww += 2 * TAB_PAD;
+    if (((Fl_Dock_Panel *)c)->dock_flags() & FL_DOCK_CLOSABLE) ww += CLOSE_W;
     if (ww < TAB_MIN_W) ww = TAB_MIN_W;
     ws[k] = ww;
     total += ww;
@@ -182,6 +193,35 @@ int Fl_Dock_Tabs::tab_at(int X, int Y) const {
   }
   free(ws);
   return at;
+}
+
+/**
+  Returns the index a tab dropped at X goes before: the tab whose left half
+  is under X, or the end.
+*/
+int Fl_Dock_Tabs::tab_insert_index(int X) const {
+  int *ws = tab_widths();
+  int tx = x();
+  int at = children();
+  for (int i = 0; i < children(); i++) {
+    if (X < tx + ws[i] / 2) {
+      at = i;
+      break;
+    }
+    tx += ws[i];
+  }
+  free(ws);
+  return at;
+}
+
+int Fl_Dock_Tabs::on_close_box(int i, int X, int Y) const {
+  Fl_Dock_Panel *p = panel(i);
+  if (!p || !(p->dock_flags() & FL_DOCK_CLOSABLE)) return 0;
+  int *ws = tab_widths();
+  int cx = x() - CLOSE_W - 2;
+  for (int k = 0; k <= i; k++) cx += ws[k];
+  free(ws);
+  return X >= cx && X < cx + CLOSE_W && Y >= y() && Y < y() + tabs_height;
 }
 
 int Fl_Dock_Tabs::on_menu_box(int X, int Y) const {
@@ -277,8 +317,61 @@ int Fl_Dock_Tabs::handle(int event) {
         show_menu();
         return 1;
       }
+      if (t >= 0 && on_close_box(t, ex, ey)) {
+        close_pressed_ = t;
+        return 1;
+      }
+      if (t >= 0 && t != value_) {
+        value(panel(t));
+        Fl_Dock_Drag::notify_selected(this, panel(t));
+      }
+      pressed_ = t;
+      press_x_ = ex;
+      press_y_ = ey;
       return 1;
     }
+    case FL_DRAG:
+      if (Fl_Dock_Drag::active()) {
+        Fl_Dock_Drag::drag();
+        return 1;
+      }
+      if (pressed_ != -2 && close_pressed_ < 0) {
+        int dx = ex - press_x_;
+        int dy = ey - press_y_;
+        if (dx * dx + dy * dy >= DRAG_START * DRAG_START) {
+          Fl_Dock_Panel *p = 0;
+          if (pressed_ >= 0) p = panel(pressed_);
+          Fl_Dock_Drag::begin(this, p);
+          pressed_ = -2;
+          if (Fl_Dock_Drag::active()) Fl_Dock_Drag::drag();
+        }
+        return 1;
+      }
+      if (close_pressed_ >= 0) return 1;
+      break;
+    case FL_RELEASE:
+      if (Fl_Dock_Drag::active()) {
+        Fl_Dock_Drag::release();
+        return 1;
+      }
+      if (close_pressed_ >= 0) {
+        int t = close_pressed_;
+        close_pressed_ = -1;
+        Fl_Dock_Panel *p = panel(t);
+        if (p && on_close_box(t, ex, ey)) Fl_Dock_Drag::close(this, p);
+        return 1;
+      }
+      if (pressed_ != -2) {
+        pressed_ = -2;
+        return 1;
+      }
+      break;
+    case FL_KEYBOARD:
+      if (Fl::event_key() == FL_Escape && Fl_Dock_Drag::active()) {
+        Fl_Dock_Drag::cancel();
+        return 1;
+      }
+      break;
     default:
       break;
   }
@@ -300,12 +393,20 @@ void Fl_Dock_Tabs::draw_strip() {
     if (sel) draw_box(FL_UP_BOX, tx, y(), tw, tabs_height, bg);
     else draw_box(FL_THIN_UP_BOX, tx, y() + 2, tw, tabs_height - 2, bg);
     int lw = tw - 2 * TAB_PAD;
+    if (p->dock_flags() & FL_DOCK_CLOSABLE) lw -= CLOSE_W;
     if (active_r()) fl_color(labelcolor());
     else fl_color(fl_inactive(labelcolor()));
     if (lw < 0) lw = 0;
     fl_push_clip(tx + TAB_PAD, y(), lw, tabs_height);
     if (p->label()) fl_draw(p->label(), tx + TAB_PAD, y(), lw, tabs_height, FL_ALIGN_LEFT);
     fl_pop_clip();
+    if (p->dock_flags() & FL_DOCK_CLOSABLE) {
+      int cx = tx + tw - CLOSE_W - 2 + CLOSE_W / 2;
+      int cy = y() + tabs_height / 2;
+      fl_color(fl_darker(labelcolor()));
+      fl_line(cx - 3, cy - 3, cx + 3, cy + 3);
+      fl_line(cx - 3, cy + 3, cx + 3, cy - 3);
+    }
     tx += tw;
   }
   free(ws);

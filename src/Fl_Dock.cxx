@@ -17,6 +17,7 @@
 #include <FL/Fl_Dock_Window.H>
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
+#include "Fl_Dock_Drag.H"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -376,6 +377,8 @@ void Fl_Dock::put(Fl_Widget *node, Fl_Dock_Where where, Fl_Widget *target, doubl
 // It is hidden first, while it is still in a window.  A panel leaving a
 // floating or inset window notes where that window was, to open there again.
 void Fl_Dock::take(Fl_Dock_Panel *p) {
+  // A drag of the panel, or of its group, ends when the panel is moved.
+  Fl_Dock_Drag::forget(p);
   Fl_Window *own = window();
   if (owner_ && own && is_tabs(p->parent())) {
     Fl_Dock_Window *dw = (Fl_Dock_Window *)own;

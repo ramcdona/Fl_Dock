@@ -25,28 +25,37 @@ class Fl_Dock_Panel;
   A leaf of an Fl_Dock's tree: one or more panels stacked as tabs, one of
   them shown.
 
-  The tab strip along the top has a tab for each panel, and a button at the
-  right of the strip opens a menu to float, dock or close the shown panel.
-  A thin line goes around the group, see border().  In an inset window the
-  strips are the title bar: the part beside the tabs moves the window.
-  Fl_Dock creates and removes tab groups as panels move.
+  The tab strip along the top selects a panel; dragging a tab moves its
+  panel, and dragging the strip beside the tabs moves them all.  A closable
+  panel's tab has a close button, and a button at the right of the strip
+  opens a menu to float, dock or close the shown panel.  A thin line goes
+  around the group, see border().  In an inset window the strips are the
+  title bar: the part beside the tabs moves the window.  Fl_Dock creates
+  and removes tab groups as panels move.
 */
 class FL_DOCK_EXPORT Fl_Dock_Tabs : public Fl_Group {
   int value_;           // index of the shown panel
+  int pressed_;         // index of the tab pressed, -1 for the strip, -2 for none
+  int press_x_, press_y_;
+  int close_pressed_;   // index of the tab whose close button is pressed, or -1
 
   int tab_at(int X, int Y) const;
   int *tab_widths() const;
   void draw_strip();
+  int on_close_box(int i, int X, int Y) const;
   int on_menu_box(int X, int Y) const;
   void show_menu();
   void insert_panel(Fl_Dock_Panel *p, int index);
   void remove_panel(Fl_Dock_Panel *p);
+  int tab_insert_index(int X) const;
   int on_strip_space(int X, int Y) const;
   friend class Fl_Dock;
+  friend class Fl_Dock_Drag;
   friend class Fl_Dock_Window;
 
 public:
   Fl_Dock_Tabs(int X, int Y, int W, int H);
+  ~Fl_Dock_Tabs() FL_OVERRIDE;
 
   void resize(int X, int Y, int W, int H) FL_OVERRIDE;
   int handle(int event) FL_OVERRIDE;

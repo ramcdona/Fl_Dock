@@ -51,6 +51,7 @@ set(FL_DOCK_HEADERS
 # Static unless BUILD_SHARED_LIBS is set.
 add_library(fltk_dock
   src/Fl_Dock.cxx
+  src/Fl_Dock_Drag.cxx
   src/Fl_Dock_Layout.cxx
   src/Fl_Dock_Panel.cxx
   src/Fl_Dock_Split.cxx
