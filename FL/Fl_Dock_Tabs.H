@@ -28,7 +28,8 @@ class Fl_Dock_Panel;
   The tab strip along the top selects a panel; dragging a tab moves its
   panel, and dragging the strip beside the tabs moves them all.  A closable
   panel's tab has a close button, and a button at the right of the strip
-  opens a menu to float, dock or close the shown panel.  A thin line goes
+  opens a menu to float, dock along an edge of the dock, slide, maximize,
+  give a stripe button or close the shown panel.  A thin line goes
   around the group, see border().  In an inset window the strips are the
   title bar: the part beside the tabs moves the window.  Fl_Dock creates
   and removes tab groups as panels move.

@@ -244,9 +244,9 @@ void Fl_Dock_Tabs::show_menu() {
     break;
   }
   if (!p || !d) return;
-  enum { FLOAT = 1000, INSET, DOCK, SLIDE, PIN, MAXIMIZE, CLOSE };
+  enum { FLOAT = 1000, INSET, DOCK, SLIDE, PIN, MAXIMIZE, CLOSE, BUTTON, EDGE };
   int n = children();
-  Fl_Menu_Item *items = (Fl_Menu_Item *)calloc(n + 8, sizeof(Fl_Menu_Item));
+  Fl_Menu_Item *items = (Fl_Menu_Item *)calloc(n + 14, sizeof(Fl_Menu_Item));
   int k = 0;
   for (int i = 0; i < n; i++) {
     items[k].label(child(i)->label());
@@ -284,6 +284,23 @@ void Fl_Dock_Tabs::show_menu() {
   if (floating && !sliding) {
     items[k].label("Dock");
     items[k].argument(DOCK);
+    k++;
+  }
+  // Docked along an edge of the whole dock, at its own size
+  static const char *edge_names[4] = { "Dock Left", "Dock Right", "Dock Top", "Dock Bottom" };
+  if ((p->dock_flags() & FL_DOCK_MOVABLE) && !sliding) {
+    for (int s = 0; s < 4; s++) {
+      items[k].label(edge_names[s]);
+      items[k].argument(EDGE + s);
+      if (s == 3) items[k].flags = FL_MENU_DIVIDER;
+      k++;
+    }
+  }
+  // A button on a stripe, which shows and hides the panel, or none
+  if (d->owner()->stripes() && !sliding) {
+    if (p->stripe_side() >= 0) items[k].label("Remove Button from Stripe");
+    else items[k].label("Show Button on Stripe");
+    items[k].argument(BUTTON);
     k++;
   }
   // On the main dock: unpin to a stripe, and give the group the whole dock.
@@ -327,6 +344,13 @@ void Fl_Dock_Tabs::show_menu() {
     owner->notify(p, FL_REASON_CHANGED);
   } else if (a == CLOSE) {
     if (p->can_close() && owner->close_panel(p)) owner->notify(p, FL_REASON_CLOSED);
+  } else if (a == BUTTON) {
+    int done = 0;
+    if (p->stripe_side() >= 0) done = owner->unstripe_panel(p);
+    else done = owner->stripe_panel(p, (Fl_Dock_Where)owner->nearest_side(p));
+    if (done) owner->notify(p, FL_REASON_DRAGGED);
+  } else if (a >= EDGE && a < EDGE + 4) {
+    if (owner->add_panel(p, (Fl_Dock_Where)(a - EDGE), 0, 0)) owner->notify(p, FL_REASON_DRAGGED);
   }
 }
 
