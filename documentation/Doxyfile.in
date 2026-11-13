@@ -57,3 +57,4 @@ PREDEFINED             = FL_DOXYGEN \
                          FL_DOCK_EXPORT= \
                          FL_OVERRIDE=override
 HIDE_UNDOC_RELATIONS   = YES
+HAVE_DOT               = NO
