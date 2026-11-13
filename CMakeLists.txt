@@ -35,7 +35,12 @@ set(FL_DOCK_FLTK fltk::fltk)
 set(FL_DOCK_FLTK_GL fltk::gl)
 if(BUILD_SHARED_LIBS AND TARGET fltk::fltk-shared)
   set(FL_DOCK_FLTK fltk::fltk-shared)
-  set(FL_DOCK_FLTK_GL fltk::gl-shared)
+  # With Visual Studio, FLTK's one DLL holds its OpenGL code too.
+  if(TARGET fltk::gl-shared)
+    set(FL_DOCK_FLTK_GL fltk::gl-shared)
+  else()
+    set(FL_DOCK_FLTK_GL fltk::fltk-shared)
+  endif()
 endif()
 
 include(GNUInstallDirs)

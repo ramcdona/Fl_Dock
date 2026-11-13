@@ -10,8 +10,13 @@
 #     https://www.fltk.org/COPYING.php
 #
 
-# The demo: a GL view in the center and panels around it.
-add_executable(dock WIN32 MACOSX_BUNDLE dock.cxx)
+# The demo: a GL view in the center and panels around it.  FLTK's DLL for
+# Visual Studio has no WinMain(), so with it the demo is a console program.
+set(FL_DOCK_DEMO_WIN32 WIN32)
+if(MSVC AND FL_DOCK_FLTK STREQUAL "fltk::fltk-shared")
+  set(FL_DOCK_DEMO_WIN32)
+endif()
+add_executable(dock ${FL_DOCK_DEMO_WIN32} MACOSX_BUNDLE dock.cxx)
 target_link_libraries(dock PRIVATE fltk::dock ${FL_DOCK_FLTK_GL})
 
 # Unit tests of the tree, the drop targets and layouts.  They show no window,
