@@ -28,6 +28,7 @@
 #include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Menu_Window.H>
 #include <FL/Fl_Preferences.H>
+#include <FL/Fl_RGB_Image.H>
 #include "../src/Fl_Dock_Drag.H"
 #include <math.h>
 #include <stdio.h>
@@ -2189,6 +2190,213 @@ TEST(Move, DockAlongAnEdgeKeepsTheOthers) {
   EXPECT_NEAR(geom->parent()->w(), gw, 4);
   EXPECT_EQ(browser->parent()->w(), bw);
   EXPECT_EQ(browser->parent()->x() + browser->parent()->w(), 800);
+  return true;
+}
+
+// ---- Less used functions -------------------------------------------------------
+
+TEST(Tree, IsPanelAndArea) {
+  arrange();
+  EXPECT_TRUE(Fl_Dock::is_panel(dock->find("a")));
+  EXPECT_TRUE(!Fl_Dock::is_panel(view));
+  EXPECT_TRUE(!Fl_Dock::is_panel(dock->root()));
+  EXPECT_TRUE(!Fl_Dock::is_panel(0));
+  int X, Y, W, H;
+  dock->area(X, Y, W, H);
+  EXPECT_EQ(X, 0);
+  EXPECT_EQ(Y, 0);
+  EXPECT_EQ(W, 800);
+  EXPECT_EQ(H, 600);
+  // A stripe with a button takes its thickness from the area.
+  dock->stripes(FL_DOCK_SIDE_LEFT);
+  dock->stripe_panel(dock->find("a"), FL_DOCK_LEFT);
+  dock->area(X, Y, W, H);
+  EXPECT_EQ(X, Fl_Dock_Stripe::thickness());
+  EXPECT_EQ(W, 800 - Fl_Dock_Stripe::thickness());
+  EXPECT_EQ(H, 600);
+  EXPECT_TRUE(dock->owner() == dock);
+  return true;
+}
+
+TEST(Split, MinSize) {
+  arrange();
+  int old = Fl_Dock_Split::min_size();
+  Fl_Dock_Split::min_size(150);
+  EXPECT_EQ(Fl_Dock_Split::min_size(), 150);
+  // A negative size is ignored.
+  Fl_Dock_Split::min_size(-1);
+  EXPECT_EQ(Fl_Dock_Split::min_size(), 150);
+  // A bar dragged far stops with the child at the smallest size.
+  Fl_Dock_Split *s = (Fl_Dock_Split *)dock->root();
+  int bx = s->child(0)->x() + s->child(0)->w() + 1;
+  mouse(s, FL_PUSH, bx, 300);
+  mouse(s, FL_DRAG, 5, 300);
+  mouse(s, FL_RELEASE, 5, 300);
+  EXPECT_EQ(s->child(0)->w(), 150);
+  Fl_Dock_Split::min_size(old);
+  return true;
+}
+
+// A panel that refuses to be closed by the user.
+class Stubborn_Panel : public Fl_Dock_Panel {
+public:
+  Stubborn_Panel(const char *L) : Fl_Dock_Panel(0, 0, 100, 100) {
+    copy_label(L);
+    end();
+  }
+  int can_close() FL_OVERRIDE { return 0; }
+};
+
+TEST(Panel, CanCloseRefuses) {
+  arrange();
+  Fl_Group::current(0);
+  Stubborn_Panel *s = new Stubborn_Panel("s");
+  dock->add_panel(s, FL_DOCK_RIGHT, 0, 0.2);
+  EXPECT_TRUE(dock->find("a")->can_close());
+  // The close button and the tab menu ask the panel first.
+  Fl_Dock_Drag::close((Fl_Dock_Tabs *)s->parent(), s);
+  EXPECT_TRUE(s->docked());
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Drag::close((Fl_Dock_Tabs *)a->parent(), a);
+  EXPECT_TRUE(!a->docked());
+  // The application's own call is not refused.
+  EXPECT_EQ(dock->close_panel(s), 1);
+  return true;
+}
+
+TEST(Panel, Flags) {
+  Fl_Dock_Panel *p = make_panel("p");
+  EXPECT_EQ(p->dock_flags(), FL_DOCK_DEFAULT_FLAGS);
+  p->dock_flags(FL_DOCK_MOVABLE);
+  EXPECT_EQ(p->dock_flags(), FL_DOCK_MOVABLE);
+  delete p;
+  return true;
+}
+
+TEST(Panel, FloatAndInsetRects) {
+  arrange();
+  Fl_Dock_Panel *a = dock->find("a");
+  int X, Y, W, H;
+  EXPECT_EQ(a->get_float_rect(X, Y, W, H), 0);
+  EXPECT_EQ(a->get_inset_rect(X, Y, W, H), 0);
+  // A floating window opens where the panel's float rect says.
+  a->float_rect(120, 90, 330, 220);
+  EXPECT_EQ(a->get_float_rect(X, Y, W, H), 1);
+  Fl_Dock_Window *w = dock->float_panel(a);
+  EXPECT_TRUE(w != 0);
+  EXPECT_EQ(w->x(), 120);
+  EXPECT_EQ(w->y(), 90);
+  EXPECT_EQ(w->w(), 330);
+  EXPECT_EQ(w->h(), 220);
+  // Leaving a window notes where it was: an inset window in the dock's
+  // coordinates.
+  dock->inset_panel(a, 200, 150, 300, 200);
+  Fl::do_widget_deletion();
+  dock->dock_panel(a);
+  Fl::do_widget_deletion();
+  EXPECT_EQ(a->get_inset_rect(X, Y, W, H), 1);
+  EXPECT_EQ(X, 200);
+  EXPECT_EQ(Y, 150);
+  EXPECT_EQ(W, 300);
+  EXPECT_EQ(H, 200);
+  return true;
+}
+
+TEST(Float, KeepInside) {
+  arrange();
+  Fl_Dock_Window *w = dock->inset_panel(dock->find("a"), 200, 150, 300, 200);
+  EXPECT_TRUE(w->owner() == dock);
+  // Moved past the dock's corner, it is moved back in.
+  w->resize(700, 500, 300, 200);
+  w->keep_inside();
+  EXPECT_EQ(w->x(), 500);
+  EXPECT_EQ(w->y(), 400);
+  // Too big, it is made smaller.
+  w->resize(0, 0, 900, 700);
+  w->keep_inside();
+  EXPECT_EQ(w->w(), 800);
+  EXPECT_EQ(w->h(), 600);
+  dock->dock_panel(dock->find("a"));
+  Fl::do_widget_deletion();
+  return true;
+}
+
+TEST(Stripe, Accessors) {
+  arrange_stripes();
+  Fl_Dock_Stripe *left = dock->stripe(FL_DOCK_LEFT);
+  Fl_Dock_Stripe *bottom = dock->stripe(FL_DOCK_BOTTOM);
+  EXPECT_EQ(left->side(), FL_DOCK_LEFT);
+  EXPECT_TRUE(left->vertical());
+  EXPECT_EQ(bottom->side(), FL_DOCK_BOTTOM);
+  EXPECT_TRUE(!bottom->vertical());
+  EXPECT_TRUE(left->button(0, 0) == dock->find("a"));
+  EXPECT_TRUE(left->button(0, 1) == dock->find("b"));
+  EXPECT_TRUE(left->button(0, 2) == 0);
+  EXPECT_TRUE(left->button(2, 0) == 0);
+  int X, Y, W, H;
+  left->button_box(0, 1, X, Y, W, H);
+  EXPECT_TRUE(left->button_at(X + W / 2, Y + H / 2) == dock->find("b"));
+  EXPECT_TRUE(left->button_at(X + W / 2, 599) == 0);
+  return true;
+}
+
+TEST(Stripe, IconSetsButtonLength) {
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Stripe *left = dock->stripe(FL_DOCK_LEFT);
+  static uchar pixels[3 * 20 * 50];
+  Fl_RGB_Image small(pixels, 20, 30);
+  Fl_RGB_Image tall(pixels, 20, 50);
+  a->dock_icon(&small);
+  EXPECT_TRUE(a->dock_icon() == &small);
+  int X, Y, W, H;
+  left->button_box(0, 0, X, Y, W, H);
+  int h1 = H;
+  // Along a vertical stripe, the button is as long as its icon is high.
+  a->dock_icon(&tall);
+  left->button_box(0, 0, X, Y, W, H);
+  EXPECT_EQ(H - h1, 20);
+  a->dock_icon(0);
+  return true;
+}
+
+TEST(Stripe, OpenAndCloseSlide) {
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  Fl_Dock_Panel *b = dock->find("b");
+  // Only a sliding panel slides out.
+  EXPECT_EQ(dock->open_slide(b), 0);
+  dock->slide_panel(a);
+  EXPECT_EQ(dock->open_slide(a), 1);
+  Fl_Dock_Window *s = dock->sliding();
+  EXPECT_TRUE(s != 0);
+  EXPECT_EQ(s->slide_side(), FL_DOCK_LEFT);
+  EXPECT_TRUE(s->owner() == dock);
+  EXPECT_TRUE(s->dock()->owner() == dock);
+  dock->close_slide();
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(dock->sliding() == 0);
+  EXPECT_EQ(a->mode(), FL_DOCK_MODE_SLIDING);
+  // Closing with nothing out does nothing.
+  dock->close_slide();
+  return true;
+}
+
+TEST(Stripe, DispatchSlidesAwayOnClickElsewhere) {
+  arrange_stripes();
+  Fl_Dock_Panel *a = dock->find("a");
+  dock->slide_panel(a);
+  dock->open_slide(a);
+  EXPECT_TRUE(dock->sliding() != 0);
+  // A click in the dock's window, away from the sliding window.
+  Fl::e_x = 700;
+  Fl::e_y = 300;
+  Fl::e_state = FL_BUTTON1;
+  Fl_Dock::dispatch(FL_PUSH, win);
+  Fl::e_state = 0;
+  Fl::do_widget_deletion();
+  EXPECT_TRUE(dock->sliding() == 0);
+  EXPECT_EQ(a->mode(), FL_DOCK_MODE_SLIDING);
   return true;
 }
 
