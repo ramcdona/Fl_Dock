@@ -304,9 +304,9 @@ int Fl_Dock_Stripe::handle(int event) {
     case FL_ENTER:
     case FL_MOVE: {
       Fl_Dock_Panel *p = button_at(Fl::event_x(), Fl::event_y());
-      if (p) {
-        int g, i, bx, by, bw, bh;
-        find(p, g, i);
+      int g, i;
+      if (p && find(p, g, i)) {
+        int bx, by, bw, bh;
         button_box(g, i, bx, by, bw, bh);
         Fl_Tooltip::enter_area(this, bx - x(), by - y(), bw, bh, p->label());
       } else {

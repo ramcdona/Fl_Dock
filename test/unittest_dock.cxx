@@ -1294,7 +1294,7 @@ TEST(Layout, UnknownSectionsIgnored) {
   arrange();
   char saved[4096];
   dock->write_layout(saved, sizeof(saved));
-  char later[4096];
+  char later[sizeof(saved) + 64];
   snprintf(later, sizeof(later), "%sstatus bar 3\n extra 1 2\n", saved);
   EXPECT_EQ(dock->read_layout(later), 0);
   EXPECT_STREQ(text(), ARRANGED);
