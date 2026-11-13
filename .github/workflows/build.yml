@@ -1,0 +1,202 @@
+name: Build and Test
+
+# Builds FLTK from source, then Fl_Dock against it, and runs the tests.
+# The tests that need a display run under Xvfb on Linux; on macOS and
+# Windows only those that need none run.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fltk: [branch-1.4, master]
+        shared: [OFF, ON]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install prerequisites
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y \
+        libglu1-mesa-dev \
+        libx11-dev \
+        libxcursor-dev \
+        libxft-dev \
+        libxinerama-dev \
+        libxfixes-dev \
+        libxrender-dev \
+        ninja-build \
+        xvfb
+
+    - name: Build FLTK ${{ matrix.fltk }}
+      run: |
+        git clone --depth 1 --branch ${{ matrix.fltk }} https://github.com/fltk/fltk.git $HOME/fltk-src
+        cmake -S $HOME/fltk-src -B $HOME/fltk-build -G Ninja \
+          -D CMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -D CMAKE_INSTALL_PREFIX=$HOME/fltk \
+          -D FLTK_BACKEND_WAYLAND=OFF \
+          -D FLTK_BUILD_SHARED_LIBS=${{ matrix.shared }} \
+          -D FLTK_BUILD_TEST=OFF \
+          -D FLTK_BUILD_FLUID=OFF \
+          -D FLTK_BUILD_FLTK_OPTIONS=OFF
+        cmake --build $HOME/fltk-build
+        cmake --install $HOME/fltk-build
+
+    - name: Configure
+      run: |
+        cmake -S . -B build -G Ninja \
+          -D CMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -D CMAKE_PREFIX_PATH=$HOME/fltk \
+          -D BUILD_SHARED_LIBS=${{ matrix.shared }} \
+          -D CMAKE_CXX_FLAGS_INIT="-Wall -Wextra -Wno-unused-parameter -Wsuggest-override -Werror"
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Test
+      run: xvfb-run -a ctest --test-dir build --output-on-failure
+
+  build-wayland:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install prerequisites
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y \
+        libglu1-mesa-dev \
+        libwayland-dev \
+        wayland-protocols \
+        libdbus-1-dev \
+        libxkbcommon-dev \
+        libegl-dev \
+        libopengl-dev \
+        libpango1.0-dev \
+        libdecor-0-dev \
+        libx11-dev \
+        libxcursor-dev \
+        libxfixes-dev \
+        libxinerama-dev \
+        ninja-build
+
+    - name: Build FLTK
+      run: |
+        git clone --depth 1 --branch branch-1.4 https://github.com/fltk/fltk.git $HOME/fltk-src
+        cmake -S $HOME/fltk-src -B $HOME/fltk-build -G Ninja \
+          -D CMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -D CMAKE_INSTALL_PREFIX=$HOME/fltk \
+          -D FLTK_BUILD_TEST=OFF \
+          -D FLTK_BUILD_FLUID=OFF \
+          -D FLTK_BUILD_FLTK_OPTIONS=OFF
+        cmake --build $HOME/fltk-build
+        cmake --install $HOME/fltk-build
+
+    - name: Build
+      run: |
+        cmake -S . -B build -G Ninja -D CMAKE_BUILD_TYPE=$BUILD_TYPE -D CMAKE_PREFIX_PATH=$HOME/fltk
+        cmake --build build
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install prerequisites
+      run: brew install ninja
+
+    - name: Build FLTK
+      run: |
+        git clone --depth 1 --branch branch-1.4 https://github.com/fltk/fltk.git $HOME/fltk-src
+        cmake -S $HOME/fltk-src -B $HOME/fltk-build -G Ninja \
+          -D CMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -D CMAKE_INSTALL_PREFIX=$HOME/fltk \
+          -D FLTK_BUILD_TEST=OFF \
+          -D FLTK_BUILD_FLUID=OFF \
+          -D FLTK_BUILD_FLTK_OPTIONS=OFF
+        cmake --build $HOME/fltk-build
+        cmake --install $HOME/fltk-build
+
+    - name: Build
+      run: |
+        cmake -S . -B build -G Ninja -D CMAKE_BUILD_TYPE=$BUILD_TYPE -D CMAKE_PREFIX_PATH=$HOME/fltk
+        cmake --build build
+
+    - name: Test
+      run: ctest --test-dir build --output-on-failure -LE display
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shared: [OFF, ON]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build FLTK
+      shell: bash
+      run: |
+        git clone --depth 1 --branch branch-1.4 https://github.com/fltk/fltk.git "$HOME/fltk-src"
+        cmake -S "$HOME/fltk-src" -B "$HOME/fltk-build" \
+          -D CMAKE_INSTALL_PREFIX="$HOME/fltk" \
+          -D FLTK_BUILD_SHARED_LIBS=${{ matrix.shared }} \
+          -D FLTK_BUILD_TEST=OFF \
+          -D FLTK_BUILD_FLUID=OFF \
+          -D FLTK_BUILD_FLTK_OPTIONS=OFF
+        cmake --build "$HOME/fltk-build" --config $BUILD_TYPE
+        cmake --install "$HOME/fltk-build" --config $BUILD_TYPE
+
+    - name: Build
+      shell: bash
+      run: |
+        cmake -S . -B build -D CMAKE_PREFIX_PATH="$HOME/fltk" -D BUILD_SHARED_LIBS=${{ matrix.shared }}
+        cmake --build build --config $BUILD_TYPE
+
+    - name: Test
+      shell: bash
+      run: |
+        # The DLLs are found beside the test programs.
+        if [ "${{ matrix.shared }}" = ON ]; then
+          cp "$HOME"/fltk/bin/*.dll build/test/$BUILD_TYPE/ || true
+          cp build/$BUILD_TYPE/*.dll build/test/$BUILD_TYPE/ || true
+        fi
+        ctest --test-dir build -C $BUILD_TYPE --output-on-failure -LE display
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install prerequisites
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y doxygen libglu1-mesa-dev libx11-dev libxcursor-dev libxft-dev \
+          libxinerama-dev libxfixes-dev ninja-build
+
+    - name: Build FLTK
+      run: |
+        git clone --depth 1 --branch branch-1.4 https://github.com/fltk/fltk.git $HOME/fltk-src
+        cmake -S $HOME/fltk-src -B $HOME/fltk-build -G Ninja -D CMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -D CMAKE_INSTALL_PREFIX=$HOME/fltk -D FLTK_BACKEND_WAYLAND=OFF -D FLTK_BUILD_TEST=OFF \
+          -D FLTK_BUILD_FLUID=OFF -D FLTK_BUILD_FLTK_OPTIONS=OFF
+        cmake --build $HOME/fltk-build
+        cmake --install $HOME/fltk-build
+
+    - name: Make the manual
+      run: |
+        cmake -S . -B build -G Ninja -D CMAKE_PREFIX_PATH=$HOME/fltk -D FL_DOCK_BUILD_HTML_DOCS=ON
+        cmake --build build --target html
+        if [ -s build/documentation/Doxyfile_error.log ]; then cat build/documentation/Doxyfile_error.log; exit 1; fi
