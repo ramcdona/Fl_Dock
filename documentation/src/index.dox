@@ -1,0 +1,21 @@
+/**
+
+\mainpage Fl_Dock Programming Manual
+
+Fl_Dock is an extension to the Fast Light Tool Kit, FLTK 1.4 and later, for
+docking panels: an application's panels can be arranged side by side,
+stacked as tabs, floated in windows of their own or slid out from stripes
+along the window's edges, by dragging them, and the arrangement saved and
+restored.
+
+  - \subpage intro
+  - \subpage design
+  - \subpage examples
+
+The classes are Fl_Dock, Fl_Dock_Panel, Fl_Dock_Split, Fl_Dock_Tabs,
+Fl_Dock_Window and Fl_Dock_Stripe.
+
+Fl_Dock is provided under the terms of the FLTK license, the GNU Library
+General Public License with exceptions; see the file COPYING.
+
+*/

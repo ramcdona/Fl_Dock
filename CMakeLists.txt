@@ -21,6 +21,8 @@ endforeach()
 project(Fl_Dock VERSION ${fl_dock_MAJOR}.${fl_dock_MINOR}.${fl_dock_PATCH} LANGUAGES C CXX)
 
 option(FL_DOCK_BUILD_TEST "Build the test programs" ON)
+option(FL_DOCK_BUILD_HTML_DOCS "Give the build a target html that makes the manual" OFF)
+option(FL_DOCK_INSTALL_HTML_DOCS "Install the manual made by the html target" OFF)
 
 # FLTK's package accepts only its own minor version, so check the lowest one here.
 find_package(FLTK CONFIG REQUIRED)
@@ -107,4 +109,8 @@ install(FILES
 if(FL_DOCK_BUILD_TEST)
   enable_testing()
   add_subdirectory(test)
+endif()
+
+if(FL_DOCK_BUILD_HTML_DOCS)
+  add_subdirectory(documentation)
 endif()

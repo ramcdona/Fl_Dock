@@ -1,0 +1,31 @@
+/**
+
+\page examples Example programs
+
+The programs in \c test/ are built with the library.
+
+\section examples_dock dock
+
+\c dock.cxx is a demonstration of every feature: an OpenGL view in the
+center and panels around it, stripes of buttons on every side, a GL panel
+whose stripe button has an icon, a panel that asks before it closes, one
+that cannot be closed, one created only when it is first asked for, two
+editors that start closed and take turns in one place, menus for the
+panels, whole-dock commands, the stripes' options and saved layouts, and a
+log of what the dock's callback reports.
+
+\section examples_tests Tests
+
+  - \c unittest_dock.cxx tests the tree, drop targets, floating, inset and
+    sliding windows, stripes, layouts, the callback and the event dispatch,
+    and every public function.
+  - \c gl_dock.cxx checks that OpenGL views keep drawing as the center and
+    in panels that are floated, docked, moved, closed and shown.
+  - \c window_dock.cxx checks a dock's windows as the application's window
+    is shown and closed.
+
+Run them with \c ctest.  \c gl_dock and \c window_dock are labeled
+\c display, as they need one; on X11 and Wayland \c unittest_dock needs
+one too, to measure text.
+
+*/

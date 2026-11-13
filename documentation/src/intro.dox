@@ -1,0 +1,106 @@
+/**
+
+\page intro Introduction
+
+Fl_Dock gives an FLTK application the docking panels of an IDE: a center,
+such as a 3D view, with panels around it that the user drags to new places,
+stacks as tabs, floats in windows of their own or inside the application's
+window, and hides behind buttons on stripes along the window's edges.  The
+application gives a default arrangement in a few calls and saves the
+user's arrangement as text or in an Fl_Preferences.
+
+It follows FLTK's conventions and license, needs nothing but FLTK 1.4 or
+later, and is written for every platform FLTK supports.
+
+\section intro_building Building and installing
+
+Fl_Dock needs FLTK 1.4 or later and CMake 3.15 or later.
+
+\code{.sh}
+cmake -S . -B build -D CMAKE_PREFIX_PATH=/path/to/fltk/install -D CMAKE_INSTALL_PREFIX=/path/to/install
+cmake --build build
+ctest --test-dir build
+cmake --install build
+\endcode
+
+This builds the library \c fltk_dock, static unless \c BUILD_SHARED_LIBS is
+set, and the test programs in \c test/, and installs the library, its
+headers in \c FL/ and a CMake package.  Another project finds it with
+\c find_package(Fl_Dock) and links \c fltk::dock.
+
+The options are:
+
+  - \c FL_DOCK_BUILD_TEST: build the test programs, on by default.
+  - \c FL_DOCK_BUILD_HTML_DOCS: give the build a target \c html that makes
+    this manual with Doxygen, off by default.
+  - \c FL_DOCK_INSTALL_HTML_DOCS: install the manual made by the \c html
+    target, off by default.
+
+The version is in FL_DOCK_MAJOR_VERSION, FL_DOCK_MINOR_VERSION,
+FL_DOCK_PATCH_VERSION and FL_DOCK_API_VERSION;
+Fl_Dock::api_version() gives the version of the library an application is
+linked with.
+
+\section intro_using A first program
+
+\code
+#include <FL/Fl.H>
+#include <FL/Fl_Double_Window.H>
+#include <FL/Fl_Box.H>
+#include <FL/Fl_Preferences.H>
+#include <FL/Fl_Dock.H>
+#include <FL/Fl_Dock_Panel.H>
+
+int main(int argc, char **argv) {
+  Fl_Double_Window *win = new Fl_Double_Window(800, 600, "Example");
+  Fl_Dock *dock = new Fl_Dock(0, 0, 800, 600);
+  win->end();
+  win->resizable(dock);
+
+  Fl_Group::current(0);
+  dock->center(new Fl_Box(FL_DOWN_BOX, 0, 0, 400, 400, "view"));
+  Fl_Dock_Panel *files = new Fl_Dock_Panel(0, 0, 200, 300, "Files");
+  files->name("files");       // the name saved layouts know it by
+  // ... the panel's widgets ...
+  files->end();
+  dock->add_panel(files, FL_DOCK_LEFT, 0, 0.25);
+
+  Fl_Preferences prefs(Fl_Preferences::USER_L, "example.org", "example");
+  dock->load_layout(prefs, "last");   // before show(): floating windows show with the window
+  win->show(argc, argv);
+  int r = Fl::run();
+  dock->save_layout(prefs, "last");
+  return r;
+}
+\endcode
+
+Things worth knowing:
+
+  - Unlike other groups, a dock does not become the current group: panels
+    are given to it with Fl_Dock::add_panel(), and may be made anywhere.
+  - A panel's name identifies it in saved layouts.  It is the label unless
+    Fl_Dock_Panel::name() sets it; set it when labels are translated.  A dock
+    refuses a panel with no name or with a name it already has.
+  - The dock deletes its panels, open or closed, its center and its floating
+    windows with itself.  Fl_Dock::remove_panel() gives a panel back, and
+    deleting a panel is safe at any time, as for any FLTK child;
+    Fl_Dock::center(0) gives the center back.
+  - Restore a layout before showing the window, or after; floating windows
+    are shown and hidden with the dock's window, so closing that window ends
+    Fl::run().
+  - The dock's callback is called for what the user does, not for the dock's
+    functions, as Fl_Widget::when() asks; Fl_Dock::callback_panel() and
+    Fl::callback_reason() say what changed.
+  - The docks install an Fl::event_dispatch() function while any dock
+    exists.  An application that sets its own afterwards must have it call
+    the one it replaced; see Fl_Dock::dispatch().
+
+\section intro_platforms Platforms
+
+On Wayland a top-level window cannot learn where it is on the screen, so a
+panel cannot be dragged from one top-level window into another there; the
+tab menu's Float and Dock items move it instead.  Everything else, inset
+and sliding windows included, works within the application's window as on
+other platforms.
+
+*/
