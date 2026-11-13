@@ -1,0 +1,38 @@
+Changes in Fl_Dock 0.1.0                                 Released: xxx yy 2026
+
+  The first release of Fl_Dock, docking panels for FLTK 1.4 and later.
+
+
+  Features
+
+  - A dock holding a tree of splits and tab groups of panels around an
+    optional center, such as a 3D view, built from ordinary FLTK groups.
+  - Panels docked beside one another, the center or the whole dock, or as
+    tabs, by calls or by dragging a tab or a tab strip, with the place a
+    panel would take shown as it is dragged.
+  - Panels floated in windows of their own, or in inset windows kept
+    inside the application's window, and docked back where they were.
+  - Stripes of buttons along the dock's edges that show and hide panels,
+    with icons, keyboard shortcuts and panels that slide out over the
+    others while unpinned.
+  - Panels that start closed, panels created when first asked for, panels
+    that take turns in one place, and panels that refuse to close.
+  - Hiding every panel, maximizing one, and a menu of the panels.
+  - Layouts written and read as text, all or nothing, and kept by name in
+    an Fl_Preferences.
+  - The dock's callback for what the user does, with FLTK's callback
+    reasons.
+
+
+  Platform Specific Notes
+
+  - Tested on macOS.  The GitHub Actions workflow builds and tests on Linux
+    with X11, macOS and Windows, static and shared, and builds for Wayland.
+  - On Wayland a panel cannot be dragged from one top-level window into
+    another; the tab menu's Float and Dock items move it instead.
+
+
+  Documentation
+
+  - A manual made with Doxygen: building, a first program, how Fl_Dock
+    works, and every class and function.
